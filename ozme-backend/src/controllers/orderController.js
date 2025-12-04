@@ -1,6 +1,8 @@
 import Order from '../models/Order.js';
 import CartItem from '../models/CartItem.js';
 import Product from '../models/Product.js';
+import Coupon from '../models/Coupon.js';
+import { sendOrderConfirmationEmail } from '../utils/orderEmails.js';
 
 /**
  * Create order from cart
@@ -32,6 +34,14 @@ export const createOrder = async (req, res) => {
       return sum + item.product.price * item.quantity;
     }, 0);
 
+    // Track coupon usage if provided
+    if (promoCode && discountAmount > 0) {
+      const coupon = await Coupon.findOne({ code: promoCode.toUpperCase() });
+      if (coupon) {
+        await coupon.markAsUsed(req.user.id);
+      }
+    }
+
     totalAmount -= discountAmount;
 
     // Create order
@@ -45,6 +55,7 @@ export const createOrder = async (req, res) => {
       })),
       shippingAddress,
       paymentMethod: paymentMethod || 'COD',
+      orderStatus: paymentMethod === 'COD' ? 'Processing' : 'Pending',
       totalAmount,
       discountAmount,
       promoCode: promoCode || null,
@@ -53,14 +64,25 @@ export const createOrder = async (req, res) => {
     // Clear cart
     await CartItem.deleteMany({ user: req.user.id });
 
-    await order.populate('items.product');
+    await order.populate('items.product user');
+
+    // Send confirmation email for COD orders
+    if (paymentMethod === 'COD') {
+      await sendOrderConfirmationEmail(order, order.user);
+    }
 
     res.status(201).json({
       success: true,
       message: 'Order created successfully',
-      data: { order },
+      data: {
+        order: {
+          ...order.toJSON(),
+          orderNumber: order.orderNumber,
+        }
+      },
     });
   } catch (error) {
+    console.error('Create order error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Server error',

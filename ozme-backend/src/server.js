@@ -16,11 +16,15 @@ import policyRoutes from './routes/policyRoutes.js';
 import contactRoutes from './routes/contactRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 
-// Admin Routes
-import adminAuthRoutes from './routes/adminAuthRoutes.js';
 import adminProductRoutes from './routes/adminProductRoutes.js';
+import adminDashboardRoutes from './routes/adminDashboardRoutes.js';
 import adminOrderRoutes from './routes/adminOrderRoutes.js';
 import adminDashboardRoutes from './routes/adminDashboardRoutes.js';
+import adminCouponRoutes from './routes/adminCouponRoutes.js';
+
+// Payment & Coupon Routes
+import paymentRoutes from './routes/paymentRoutes.js';
+import couponRoutes from './routes/couponRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -76,12 +80,15 @@ app.use('/api/faqs', faqRoutes);
 app.use('/api/policies', policyRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/coupons', couponRoutes);
 
 // Admin API Routes
 app.use('/api/admin/auth', adminAuthRoutes);
 app.use('/api/admin/products', adminProductRoutes);
 app.use('/api/admin/orders', adminOrderRoutes);
 app.use('/api/admin/dashboard', adminDashboardRoutes);
+app.use('/api/admin/coupons', adminCouponRoutes);
 
 // Error Handling Middleware
 app.use(notFound);
