@@ -88,17 +88,26 @@ export const verifyPayment = async (req, res) => {
         // Fetch payment details from Razorpay
         const paymentDetails = await fetchPaymentDetails(razorpayPaymentId);
 
+        // Step 1: Confirm order in database first (payment success)
         order.paymentId = razorpayPaymentId;
         order.paymentStatus = 'Paid';
         order.orderStatus = 'Processing';
         await order.save();
 
-        // Send order confirmation email
-        await sendOrderConfirmationEmail(order, order.user);
+        // Step 2: Send order confirmation email (after order is confirmed)
+        // Email failure should not break the payment verification flow
+        try {
+            await sendOrderConfirmationEmail(order, order.user);
+        } catch (emailError) {
+            console.error('Failed to send order confirmation email:', emailError);
+            // Don't fail the payment verification if email fails
+            // Order is already confirmed and saved to database
+        }
 
+        // Step 3: Return success response (order is confirmed regardless of email status)
         res.status(200).json({
             success: true,
-            message: 'Payment verified successfully',
+            message: 'Payment verified successfully and order confirmed',
             data: {
                 orderId: order._id,
                 orderNumber: order.orderNumber,
