@@ -1,5 +1,6 @@
 import { createRazorpayOrder, verifyPaymentSignature, fetchPaymentDetails } from '../utils/razorpay.js';
 import Order from '../models/Order.js';
+import Product from '../models/Product.js';
 import { sendOrderConfirmationEmail } from '../utils/orderEmails.js';
 
 /**
@@ -88,7 +89,65 @@ export const verifyPayment = async (req, res) => {
         // Fetch payment details from Razorpay
         const paymentDetails = await fetchPaymentDetails(razorpayPaymentId);
 
-        // Step 1: Confirm order in database first (payment success)
+        // Step 1: Reduce product stock (payment confirmed - order is now confirmed)
+        // Check if stock was already reduced (in case of duplicate payment verification)
+        const orderItems = order.items || [];
+        
+        for (const orderItem of orderItems) {
+          const product = await Product.findById(orderItem.product);
+          if (!product) {
+            console.error(`Product with ID ${orderItem.product} not found during stock reduction`);
+            continue;
+          }
+
+          const orderedSize = orderItem.size || '100ML';
+          const orderedQuantity = orderItem.quantity || 1;
+
+          // Check if product has sizes array
+          if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+            // Find the size in the sizes array
+            const sizeIndex = product.sizes.findIndex(s => 
+              s.size && s.size.toUpperCase() === orderedSize.toUpperCase()
+            );
+
+            if (sizeIndex !== -1) {
+              const currentStock = product.sizes[sizeIndex].stockQuantity || 0;
+              
+              // Only reduce if there's enough stock (prevent double reduction)
+              if (currentStock >= orderedQuantity) {
+                // Reduce stock for the specific size
+                product.sizes[sizeIndex].stockQuantity = currentStock - orderedQuantity;
+                product.sizes[sizeIndex].inStock = (product.sizes[sizeIndex].stockQuantity || 0) > 0;
+
+                // Update product-level stock quantity (sum of all sizes)
+                product.stockQuantity = product.sizes.reduce((sum, s) => sum + (s.stockQuantity || 0), 0);
+                product.inStock = product.sizes.some(s => s.inStock !== false && (s.stockQuantity || 0) > 0);
+                
+                // Save updated product
+                await product.save();
+              } else {
+                console.warn(`Stock already reduced or insufficient for product ${product.name} (${orderedSize}). Current: ${currentStock}, Required: ${orderedQuantity}`);
+              }
+            }
+          } else {
+            // Handle single size product (backward compatibility)
+            const currentStock = product.stockQuantity || 0;
+            
+            // Only reduce if there's enough stock (prevent double reduction)
+            if (currentStock >= orderedQuantity) {
+              // Reduce stock
+              product.stockQuantity = currentStock - orderedQuantity;
+              product.inStock = product.stockQuantity > 0;
+              
+              // Save updated product
+              await product.save();
+            } else {
+              console.warn(`Stock already reduced or insufficient for product ${product.name}. Current: ${currentStock}, Required: ${orderedQuantity}`);
+            }
+          }
+        }
+
+        // Step 2: Confirm order in database (payment success)
         order.paymentId = razorpayPaymentId;
         order.paymentStatus = 'Paid';
         order.orderStatus = 'Processing';

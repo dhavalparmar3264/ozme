@@ -64,10 +64,17 @@ export default function CartPage() {
             });
 
             if (response && response.success) {
+                const promoData = {
+                    code: code.toUpperCase(),
+                    discountAmount: response.data.discountAmount || 0,
+                    data: response.data,
+                };
                 setAppliedPromoCode(code.toUpperCase());
                 setPromoCodeDiscount(response.data.discountAmount || 0);
                 setPromoCodeData(response.data);
                 setPromoCode('');
+                // Save to localStorage for checkout page
+                localStorage.setItem('appliedPromoCode', JSON.stringify(promoData));
                 toast.success(`Promo code "${code.toUpperCase()}" applied successfully!`);
             } else {
                 const errorMessage = response?.message || 'Invalid promo code';
@@ -75,6 +82,8 @@ export default function CartPage() {
                 setAppliedPromoCode(null);
                 setPromoCodeDiscount(0);
                 setPromoCodeData(null);
+                // Remove from localStorage on error
+                localStorage.removeItem('appliedPromoCode');
             }
         } catch (error) {
             console.error('Promo code validation error:', error);
@@ -83,6 +92,8 @@ export default function CartPage() {
             setAppliedPromoCode(null);
             setPromoCodeDiscount(0);
             setPromoCodeData(null);
+            // Remove from localStorage on error
+            localStorage.removeItem('appliedPromoCode');
         } finally {
             setIsValidatingPromo(false);
         }
@@ -92,6 +103,8 @@ export default function CartPage() {
         setAppliedPromoCode(null);
         setPromoCodeDiscount(0);
         setPromoCodeData(null);
+        // Remove from localStorage
+        localStorage.removeItem('appliedPromoCode');
         toast.success('Promo code removed');
     };
     // Hero Section

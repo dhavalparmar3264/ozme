@@ -305,6 +305,9 @@ export default function TrackOrder() {
     yPosition = addText(`Order ID: ${orderData.orderId}`, margin, yPosition, pageWidth - 2 * margin, 10);
     yPosition = addText(`Order Date: ${formatOrderDate(orderData.orderDate)}`, margin, yPosition, pageWidth - 2 * margin, 10);
     yPosition = addText(`Payment Method: ${orderData.paymentMethod === 'COD' ? 'Cash on Delivery' : 'Online Payment'}`, margin, yPosition, pageWidth - 2 * margin, 10);
+    if (orderData.promoCode) {
+      yPosition = addText(`Promo Code: ${orderData.promoCode}`, margin, yPosition, pageWidth - 2 * margin, 10);
+    }
     yPosition += 5;
 
     if (orderData.shippingAddress) {
@@ -422,11 +425,21 @@ export default function TrackOrder() {
     doc.setFont('helvetica', 'normal');
     const subtotal = orderData.subtotal || calculatedSubtotal;
     const shipping = orderData.shippingCost || 0;
-    const grandTotal = subtotal + shipping;
+    const discountAmount = orderData.discountAmount || 0;
+    const grandTotal = orderData.totalAmount || (subtotal - discountAmount + shipping);
 
     doc.text('Subtotal:', pageWidth - 80, yPosition, { align: 'right' });
     doc.text(`₹${subtotal.toLocaleString('en-IN')}`, pageWidth - margin - 2, yPosition, { align: 'right' });
     yPosition += 6;
+
+    if (discountAmount > 0) {
+      doc.setTextColor(0, 150, 0); // Green color for discount
+      const discountLabel = orderData.promoCode ? `Discount (${orderData.promoCode}):` : 'Discount:';
+      doc.text(discountLabel, pageWidth - 80, yPosition, { align: 'right' });
+      doc.text(`-₹${discountAmount.toLocaleString('en-IN')}`, pageWidth - margin - 2, yPosition, { align: 'right' });
+      doc.setTextColor(0, 0, 0); // Reset to black
+      yPosition += 6;
+    }
 
     if (shipping > 0 || orderData.shippingCost !== undefined) {
       doc.text('Shipping:', pageWidth - 80, yPosition, { align: 'right' });

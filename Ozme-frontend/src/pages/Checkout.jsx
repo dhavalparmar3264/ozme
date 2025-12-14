@@ -62,6 +62,13 @@ export default function CheckoutPage() {
     const [selectedAddressId, setSelectedAddressId] = useState(null);
     const [showAddAddressForm, setShowAddAddressForm] = useState(false);
     const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
+    
+    // Promo code state
+    const [promoCode, setPromoCode] = useState('');
+    const [appliedPromoCode, setAppliedPromoCode] = useState(null);
+    const [promoCodeDiscount, setPromoCodeDiscount] = useState(0);
+    const [promoCodeData, setPromoCodeData] = useState(null);
+    const [isValidatingPromo, setIsValidatingPromo] = useState(false);
 
     // Reset order state function (only resets order-related state, not checkout form)
     const resetOrderState = () => {
@@ -102,7 +109,24 @@ export default function CheckoutPage() {
     const cartItems = cart.length > 0 ? cart : [];
     const subtotal = cartItems.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
     const shippingCost = 0;
-    const total = subtotal + shippingCost;
+    const discountAmount = promoCodeDiscount || 0;
+    const total = Math.max(0, subtotal + shippingCost - discountAmount);
+
+    // Load applied promo code from localStorage (from cart page)
+    useEffect(() => {
+        try {
+            const savedPromo = localStorage.getItem('appliedPromoCode');
+            if (savedPromo) {
+                const promoData = JSON.parse(savedPromo);
+                setAppliedPromoCode(promoData.code);
+                setPromoCodeDiscount(promoData.discountAmount || 0);
+                setPromoCodeData(promoData.data);
+            }
+        } catch (error) {
+            console.error('Error loading promo code from localStorage:', error);
+            localStorage.removeItem('appliedPromoCode');
+        }
+    }, []);
 
     // Fetch user profile and addresses when logged in
     useEffect(() => {
@@ -238,6 +262,70 @@ export default function CheckoutPage() {
         }));
     };
 
+    // Handle promo code validation
+    const handleApplyPromoCode = async () => {
+        const code = promoCode.trim();
+        
+        if (!code) {
+            toast.error('Please enter a promo code');
+            return;
+        }
+
+        // Check if user is authenticated (required for backend validation)
+        if (!isAuthenticated) {
+            toast.error('Please login to apply promo codes');
+            navigate('/login', { state: { from: '/checkout' } });
+            return;
+        }
+
+        setIsValidatingPromo(true);
+
+        try {
+            const orderAmount = subtotal + shippingCost;
+
+            // Call backend API to validate coupon
+            const response = await apiRequest('/coupons/validate', {
+                method: 'POST',
+                body: JSON.stringify({
+                    code: code.toUpperCase(),
+                    orderAmount: orderAmount,
+                }),
+            });
+
+            if (response && response.success) {
+                setAppliedPromoCode(code.toUpperCase());
+                setPromoCodeDiscount(response.data.discountAmount || 0);
+                setPromoCodeData(response.data);
+                setPromoCode('');
+                toast.success(`Promo code "${code.toUpperCase()}" applied successfully!`);
+            } else {
+                const errorMessage = response?.message || 'Invalid promo code';
+                toast.error(errorMessage);
+                setAppliedPromoCode(null);
+                setPromoCodeDiscount(0);
+                setPromoCodeData(null);
+            }
+        } catch (error) {
+            console.error('Promo code validation error:', error);
+            toast.error(error.message || 'Failed to validate promo code');
+            setAppliedPromoCode(null);
+            setPromoCodeDiscount(0);
+            setPromoCodeData(null);
+        } finally {
+            setIsValidatingPromo(false);
+        }
+    };
+
+    const handleRemovePromoCode = () => {
+        setAppliedPromoCode(null);
+        setPromoCodeDiscount(0);
+        setPromoCodeData(null);
+        setPromoCode('');
+        // Remove from localStorage
+        localStorage.removeItem('appliedPromoCode');
+        toast.success('Promo code removed');
+    };
+
     // Validate shipping form
     const validateShipping = () => {
         const required = ['firstName', 'lastName', 'email', 'phone', 'address', 'city', 'state', 'pincode'];
@@ -354,8 +442,8 @@ export default function CheckoutPage() {
                     items: orderItems,
                     shippingAddress: shippingAddress,
                     paymentMethod: 'Prepaid',
-                    promoCode: null,
-                    discountAmount: 0,
+                    promoCode: appliedPromoCode,
+                    discountAmount: discountAmount,
                     totalAmount: total,
                 }),
             });
@@ -409,6 +497,9 @@ export default function CheckoutPage() {
                             if (verifyResponse && verifyResponse.success) {
                                 // Clear cart after successful payment
                                 clearCart();
+                                
+                                // Clear applied promo code from localStorage
+                                localStorage.removeItem('appliedPromoCode');
                                 
                                 // Show success message
                                 toast.success('Payment successful! Your order has been placed.');
@@ -582,8 +673,8 @@ export default function CheckoutPage() {
                     items: orderItems,
                     shippingAddress: shippingAddress,
                     paymentMethod: 'COD',
-                    promoCode: null, // TODO: Add promo code support
-                    discountAmount: 0, // TODO: Add discount support
+                    promoCode: appliedPromoCode,
+                    discountAmount: discountAmount,
                     totalAmount: total,
                 }),
             });
@@ -636,6 +727,9 @@ export default function CheckoutPage() {
             
             // Clear cart after order is placed
             clearCart();
+            
+            // Clear applied promo code from localStorage
+            localStorage.removeItem('appliedPromoCode');
             
             // Show success message
             toast.success('Your Cash on Delivery order has been placed successfully!');
@@ -1529,12 +1623,70 @@ export default function CheckoutPage() {
                                     ))}
                                 </div>
 
+                                {/* Promo Code Section */}
+                                <div className="pt-6 border-t border-gray-200 mb-6">
+                                    {appliedPromoCode ? (
+                                        <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <Check className="w-5 h-5 text-green-600" />
+                                                    <div>
+                                                        <p className="text-sm font-semibold text-green-900">{appliedPromoCode}</p>
+                                                        <p className="text-xs text-green-700">Discount: ₹{discountAmount.toLocaleString('en-IN')}</p>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRemovePromoCode}
+                                                    className="text-green-600 hover:text-green-800"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="mb-4">
+                                            <label className="block text-sm font-semibold text-gray-700 mb-2">Promo Code</label>
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={promoCode}
+                                                    onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                                                    onKeyPress={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            handleApplyPromoCode();
+                                                        }
+                                                    }}
+                                                    placeholder="Enter code"
+                                                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={handleApplyPromoCode}
+                                                    disabled={isValidatingPromo || !promoCode.trim()}
+                                                    className="px-4 py-2 text-sm bg-gray-900 text-white font-semibold rounded-lg hover:bg-gray-800 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    {isValidatingPromo ? '...' : 'Apply'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
                                 {/* Price Breakdown */}
                                 <div className="space-y-3 pt-6 border-t border-gray-200 mb-6">
                                     <div className="flex justify-between text-gray-600">
                                         <span className="font-light">Subtotal</span>
                                         <span className="font-semibold">₹{subtotal.toLocaleString('en-IN')}</span>
                                     </div>
+
+                                    {discountAmount > 0 && (
+                                        <div className="flex justify-between text-green-600">
+                                            <span className="font-light">Discount</span>
+                                            <span className="font-semibold">-₹{discountAmount.toLocaleString('en-IN')}</span>
+                                        </div>
+                                    )}
 
                                     <div className="flex justify-between text-gray-600">
                                         <span className="font-light">Shipping</span>

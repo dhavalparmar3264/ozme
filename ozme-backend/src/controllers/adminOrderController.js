@@ -2,6 +2,54 @@ import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 
 /**
+ * Helper function to reduce product stock for order items
+ * @param {Array} orderItems - Array of order items with product, quantity, and size
+ * @returns {Promise<void>}
+ */
+const reduceOrderStock = async (orderItems) => {
+  for (const orderItem of orderItems) {
+    const product = await Product.findById(orderItem.product);
+    if (!product) {
+      console.error(`Product with ID ${orderItem.product} not found during stock reduction`);
+      continue;
+    }
+
+    const orderedSize = orderItem.size || '100ML';
+    const orderedQuantity = orderItem.quantity || 1;
+
+    // Check if product has sizes array
+    if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+      // Find the size in the sizes array
+      const sizeIndex = product.sizes.findIndex(s => 
+        s.size && s.size.toUpperCase() === orderedSize.toUpperCase()
+      );
+
+      if (sizeIndex !== -1) {
+        const currentStock = product.sizes[sizeIndex].stockQuantity || 0;
+        
+        // Reduce stock for the specific size
+        product.sizes[sizeIndex].stockQuantity = Math.max(0, currentStock - orderedQuantity);
+        product.sizes[sizeIndex].inStock = (product.sizes[sizeIndex].stockQuantity || 0) > 0;
+
+        // Update product-level stock quantity (sum of all sizes)
+        product.stockQuantity = product.sizes.reduce((sum, s) => sum + (s.stockQuantity || 0), 0);
+        product.inStock = product.sizes.some(s => s.inStock !== false && (s.stockQuantity || 0) > 0);
+      }
+    } else {
+      // Handle single size product (backward compatibility)
+      const currentStock = product.stockQuantity || 0;
+      
+      // Reduce stock
+      product.stockQuantity = Math.max(0, currentStock - orderedQuantity);
+      product.inStock = product.stockQuantity > 0;
+    }
+
+    // Save updated product
+    await product.save();
+  }
+};
+
+/**
  * Get all orders with filters
  * @route GET /api/admin/orders
  */
@@ -102,7 +150,7 @@ export const updateAdminOrderStatus = async (req, res) => {
   try {
     const { orderStatus, paymentStatus, trackingNumber } = req.body;
 
-    const order = await Order.findById(req.params.id);
+    const order = await Order.findById(req.params.id).populate('items.product');
 
     if (!order) {
       return res.status(404).json({
@@ -110,6 +158,13 @@ export const updateAdminOrderStatus = async (req, res) => {
         message: 'Order not found',
       });
     }
+
+    const previousOrderStatus = order.orderStatus;
+    const previousPaymentStatus = order.paymentStatus;
+
+    // Check if order is being confirmed (moving to Processing) and stock hasn't been reduced yet
+    const isBeingConfirmed = (orderStatus === 'Processing' && previousOrderStatus === 'Pending') ||
+                             (paymentStatus === 'Paid' && previousPaymentStatus !== 'Paid' && order.orderStatus === 'Pending');
 
     if (orderStatus) {
       order.orderStatus = orderStatus;
@@ -121,6 +176,18 @@ export const updateAdminOrderStatus = async (req, res) => {
     
     if (trackingNumber !== undefined) {
       order.trackingNumber = trackingNumber;
+    }
+
+    // Reduce stock if order is being confirmed for the first time
+    // This handles cases where admin manually confirms a pending order
+    if (isBeingConfirmed && (order.orderStatus === 'Processing' || order.paymentStatus === 'Paid')) {
+      try {
+        await reduceOrderStock(order.items);
+        console.log(`Stock reduced for order ${order._id} via admin status update`);
+      } catch (stockError) {
+        console.error('Error reducing stock during admin status update:', stockError);
+        // Don't fail the status update if stock reduction fails, but log it
+      }
     }
 
     await order.save();

@@ -1,76 +1,77 @@
 import { Plus, Edit, Trash2, Search, Ticket, TrendingUp, Users, ArrowLeft } from 'lucide-react';
-import { useState } from 'react';
-
-// Sample coupon data
-const initialCoupons = [
-  {
-    id: 1,
-    code: 'SUMMER20',
-    type: 'Percentage',
-    value: 20,
-    minOrder: 50,
-    maxDiscount: 100,
-    usageLimit: 100,
-    usedCount: 45,
-    expiry: '2024-12-31',
-    status: 'Active',
-    description: 'Summer special discount'
-  },
-  {
-    id: 2,
-    code: 'WELCOME10',
-    type: 'Fixed Amount',
-    value: 10,
-    minOrder: 30,
-    maxDiscount: 10,
-    usageLimit: 500,
-    usedCount: 234,
-    expiry: '2024-12-31',
-    status: 'Active',
-    description: 'Welcome discount for new users'
-  },
-  {
-    id: 3,
-    code: 'FLASH50',
-    type: 'Percentage',
-    value: 50,
-    minOrder: 100,
-    maxDiscount: 200,
-    usageLimit: 50,
-    usedCount: 50,
-    expiry: '2024-11-30',
-    status: 'Inactive',
-    description: 'Flash sale discount'
-  },
-  {
-    id: 4,
-    code: 'FREESHIP',
-    type: 'Fixed Amount',
-    value: 5,
-    minOrder: 25,
-    maxDiscount: 5,
-    usageLimit: 200,
-    usedCount: 89,
-    expiry: '2025-01-31',
-    status: 'Active',
-    description: 'Free shipping coupon'
-  }
-];
+import { useState, useEffect } from 'react';
+import { apiRequest } from '../utils/api';
 
 const Coupons = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [coupons, setCoupons] = useState(initialCoupons);
+  const [coupons, setCoupons] = useState([]);
   const [editingCoupon, setEditingCoupon] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Fetch coupons from backend
+  useEffect(() => {
+    fetchCoupons();
+  }, []);
+
+  const fetchCoupons = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await apiRequest('/admin/coupons');
+      
+      if (response && response.success) {
+        // Transform backend data to frontend format
+        const transformedCoupons = response.data.map(coupon => ({
+          id: coupon._id,
+          code: coupon.code,
+          type: coupon.type,
+          value: coupon.value,
+          minOrder: coupon.minOrder,
+          maxDiscount: coupon.maxDiscount,
+          usageLimit: coupon.usageLimit,
+          usedCount: coupon.usedCount || 0,
+          expiry: coupon.expiryDate ? new Date(coupon.expiryDate).toISOString().split('T')[0] : '',
+          status: coupon.status,
+          description: coupon.description || '',
+          perUserLimit: coupon.perUserLimit || 1,
+        }));
+        setCoupons(transformedCoupons);
+      } else {
+        setError('Failed to fetch coupons');
+      }
+    } catch (err) {
+      console.error('Error fetching coupons:', err);
+      setError(err.message || 'Failed to load coupons');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filteredCoupons = coupons.filter(coupon =>
     coupon.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
     coupon.type.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleDelete = (couponId) => {
-    if (window.confirm('Are you sure you want to delete this coupon?')) {
-      setCoupons(coupons.filter(c => c.id !== couponId));
+  const handleDelete = async (couponId) => {
+    if (!window.confirm('Are you sure you want to delete this coupon?')) {
+      return;
+    }
+
+    try {
+      const response = await apiRequest(`/admin/coupons/${couponId}`, {
+        method: 'DELETE',
+      });
+
+      if (response && response.success) {
+        fetchCoupons(); // Refresh list
+      } else {
+        alert(response?.message || 'Failed to delete coupon');
+      }
+    } catch (err) {
+      console.error('Error deleting coupon:', err);
+      alert(err.message || 'Failed to delete coupon');
     }
   };
 
@@ -99,6 +100,35 @@ const Coupons = () => {
     totalUsage: coupons.reduce((sum, c) => sum + c.usedCount, 0)
   };
 
+  // Loading state
+  if (loading) {
+    return (
+      <div className="p-6 lg:p-8 space-y-8 bg-gradient-to-br from-gray-50 via-white to-amber-50/30 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading coupons...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error && coupons.length === 0) {
+    return (
+      <div className="p-6 lg:p-8 space-y-8 bg-gradient-to-br from-gray-50 via-white to-amber-50/30 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
+          <button
+            onClick={fetchCoupons}
+            className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (showAddForm) {
     return <AddCouponForm 
       onBack={() => {
@@ -106,14 +136,45 @@ const Coupons = () => {
         setEditingCoupon(null);
       }} 
       editingCoupon={editingCoupon}
-      onSave={(coupon) => {
-        if (editingCoupon) {
-          setCoupons(coupons.map(c => c.id === coupon.id ? coupon : c));
-        } else {
-          setCoupons([...coupons, { ...coupon, id: coupons.length + 1, usedCount: 0 }]);
+      onSave={async (coupon) => {
+        try {
+          const couponData = {
+            code: coupon.code,
+            type: coupon.type,
+            value: coupon.value,
+            minOrder: coupon.minOrder,
+            maxDiscount: coupon.maxDiscount,
+            usageLimit: coupon.usageLimit,
+            expiryDate: coupon.expiry,
+            status: coupon.status,
+            description: coupon.description || '',
+            perUserLimit: coupon.perUserLimit || 1,
+          };
+
+          let response;
+          if (editingCoupon) {
+            response = await apiRequest(`/admin/coupons/${editingCoupon.id}`, {
+              method: 'PUT',
+              body: JSON.stringify(couponData),
+            });
+          } else {
+            response = await apiRequest('/admin/coupons', {
+              method: 'POST',
+              body: JSON.stringify(couponData),
+            });
+          }
+
+          if (response && response.success) {
+            fetchCoupons(); // Refresh list
+            setShowAddForm(false);
+            setEditingCoupon(null);
+          } else {
+            alert(response?.message || `Failed to ${editingCoupon ? 'update' : 'create'} coupon`);
+          }
+        } catch (err) {
+          console.error(`Error ${editingCoupon ? 'updating' : 'creating'} coupon:`, err);
+          alert(err.message || `Failed to ${editingCoupon ? 'update' : 'create'} coupon`);
         }
-        setShowAddForm(false);
-        setEditingCoupon(null);
       }}
     />;
   }
@@ -194,8 +255,17 @@ const Coupons = () => {
       </div>
 
       {/* Coupons Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {filteredCoupons.map((coupon) => (
+      {filteredCoupons.length === 0 ? (
+        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-amber-100/20 dark:border-amber-900/20 p-12 text-center">
+          <Ticket className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-600 dark:text-gray-400 text-lg">No coupons found</p>
+          <p className="text-gray-500 dark:text-gray-500 text-sm mt-2">
+            {searchTerm ? 'Try adjusting your search' : 'Create your first coupon to get started'}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {filteredCoupons.map((coupon) => (
           <div key={coupon.id} className="group bg-white dark:bg-gray-800 rounded-2xl border border-amber-100/20 dark:border-amber-900/20 overflow-hidden shadow-sm hover:shadow-xl hover:shadow-amber-500/10 transition-all duration-300">
             <div className="p-6">
               <div className="flex items-start justify-between mb-4">
@@ -271,31 +341,63 @@ const Coupons = () => {
             </div>
           </div>
         ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
 
 // Add/Edit Coupon Form Component
 const AddCouponForm = ({ onBack, editingCoupon, onSave }) => {
-  const [formData, setFormData] = useState(editingCoupon || {
-    code: '',
-    type: 'Percentage',
-    value: '',
-    minOrder: '',
-    maxDiscount: '',
-    usageLimit: '',
-    expiry: '',
-    status: 'Active',
-    description: ''
+  const [formData, setFormData] = useState(() => {
+    if (editingCoupon) {
+      return {
+        code: editingCoupon.code || '',
+        type: editingCoupon.type || 'Percentage',
+        value: editingCoupon.value || '',
+        minOrder: editingCoupon.minOrder || '',
+        maxDiscount: editingCoupon.maxDiscount || '',
+        usageLimit: editingCoupon.usageLimit || '',
+        expiry: editingCoupon.expiry || '',
+        status: editingCoupon.status || 'Active',
+        description: editingCoupon.description || '',
+        perUserLimit: editingCoupon.perUserLimit || 1,
+      };
+    }
+    return {
+      code: '',
+      type: 'Percentage',
+      value: '',
+      minOrder: '',
+      maxDiscount: '',
+      usageLimit: '',
+      expiry: '',
+      status: 'Active',
+      description: '',
+      perUserLimit: 1,
+    };
   });
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.code || !formData.value || !formData.minOrder || !formData.maxDiscount || !formData.usageLimit || !formData.expiry) {
       alert('Please fill in all required fields');
       return;
     }
-    onSave(formData);
+
+    // Validate expiry date is in the future
+    const expiryDate = new Date(formData.expiry);
+    if (expiryDate < new Date()) {
+      alert('Expiry date must be in the future');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await onSave(formData);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleChange = (field, value) => {
@@ -411,6 +513,7 @@ const AddCouponForm = ({ onBack, editingCoupon, onSave }) => {
                   </label>
                   <input
                     type="number"
+                    min="1"
                     value={formData.usageLimit}
                     onChange={(e) => handleChange('usageLimit', parseInt(e.target.value))}
                     placeholder="100"
@@ -420,15 +523,31 @@ const AddCouponForm = ({ onBack, editingCoupon, onSave }) => {
 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                    Expiry Date *
+                    Per User Limit
                   </label>
                   <input
-                    type="date"
-                    value={formData.expiry}
-                    onChange={(e) => handleChange('expiry', e.target.value)}
+                    type="number"
+                    min="1"
+                    value={formData.perUserLimit}
+                    onChange={(e) => handleChange('perUserLimit', parseInt(e.target.value) || 1)}
+                    placeholder="1"
                     className="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-white"
                   />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">How many times a single user can use this coupon</p>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  Expiry Date *
+                </label>
+                <input
+                  type="date"
+                  value={formData.expiry}
+                  onChange={(e) => handleChange('expiry', e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-white"
+                />
               </div>
 
               <div>
@@ -473,9 +592,10 @@ const AddCouponForm = ({ onBack, editingCoupon, onSave }) => {
           <div className="space-y-3">
             <button 
               onClick={handleSave}
-              className="w-full py-3 px-4 bg-gradient-to-r from-amber-400 to-amber-600 text-white rounded-xl hover:shadow-lg hover:shadow-amber-500/25 transition-all font-semibold"
+              disabled={saving}
+              className="w-full py-3 px-4 bg-gradient-to-r from-amber-400 to-amber-600 text-white rounded-xl hover:shadow-lg hover:shadow-amber-500/25 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {editingCoupon ? 'Update Coupon' : 'Create Coupon'}
+              {saving ? 'Saving...' : (editingCoupon ? 'Update Coupon' : 'Create Coupon')}
             </button>
             <button 
               onClick={onBack}

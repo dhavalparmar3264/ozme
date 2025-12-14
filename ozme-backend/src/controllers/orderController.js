@@ -5,6 +5,65 @@ import Coupon from '../models/Coupon.js';
 import { sendOrderConfirmationEmail } from '../utils/orderEmails.js';
 
 /**
+ * Helper function to reduce product stock for order items
+ * @param {Array} orderItems - Array of order items with product, quantity, and size
+ * @returns {Promise<void>}
+ */
+const reduceOrderStock = async (orderItems) => {
+  for (const orderItem of orderItems) {
+    const product = await Product.findById(orderItem.product);
+    if (!product) {
+      throw new Error(`Product with ID ${orderItem.product} not found`);
+    }
+
+    const orderedSize = orderItem.size || '100ML';
+    const orderedQuantity = orderItem.quantity || 1;
+
+    // Check if product has sizes array
+    if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+      // Find the size in the sizes array
+      const sizeIndex = product.sizes.findIndex(s => 
+        s.size && s.size.toUpperCase() === orderedSize.toUpperCase()
+      );
+
+      if (sizeIndex === -1) {
+        throw new Error(`Size ${orderedSize} not available for product ${product.name}`);
+      }
+
+      const currentStock = product.sizes[sizeIndex].stockQuantity || 0;
+      
+      // Check if enough stock available
+      if (currentStock < orderedQuantity) {
+        throw new Error(`Insufficient stock for ${product.name} (${orderedSize}). Available: ${currentStock}, Requested: ${orderedQuantity}`);
+      }
+
+      // Reduce stock for the specific size
+      product.sizes[sizeIndex].stockQuantity = currentStock - orderedQuantity;
+      product.sizes[sizeIndex].inStock = (currentStock - orderedQuantity) > 0;
+
+      // Update product-level stock quantity (sum of all sizes)
+      product.stockQuantity = product.sizes.reduce((sum, s) => sum + (s.stockQuantity || 0), 0);
+      product.inStock = product.sizes.some(s => s.inStock !== false && (s.stockQuantity || 0) > 0);
+    } else {
+      // Handle single size product (backward compatibility)
+      const currentStock = product.stockQuantity || 0;
+      
+      // Check if enough stock available
+      if (currentStock < orderedQuantity) {
+        throw new Error(`Insufficient stock for ${product.name}. Available: ${currentStock}, Requested: ${orderedQuantity}`);
+      }
+
+      // Reduce stock
+      product.stockQuantity = currentStock - orderedQuantity;
+      product.inStock = product.stockQuantity > 0;
+    }
+
+    // Save updated product
+    await product.save();
+  }
+};
+
+/**
  * Create order from cart
  * @route POST /api/orders
  */
@@ -115,6 +174,68 @@ export const createOrder = async (req, res) => {
       pincode: shippingAddress.pincode || '',
       country: shippingAddress.country || 'India',
     };
+
+    // Check stock availability and reduce stock for COD orders (confirmed immediately)
+    // For online payments, stock will be reduced after payment verification (when confirmed)
+    const isCOD = paymentMethod === 'COD' || (!paymentMethod || paymentMethod.toUpperCase() === 'COD');
+    
+    if (isCOD) {
+      // COD orders are confirmed immediately - reduce stock now
+      try {
+        await reduceOrderStock(orderItems);
+      } catch (stockError) {
+        return res.status(400).json({
+          success: false,
+          message: stockError.message || 'Stock reduction failed',
+        });
+      }
+    } else {
+      // For online payments, just check stock availability (don't reduce until payment confirmed)
+      for (const orderItem of orderItems) {
+        const product = await Product.findById(orderItem.product);
+        if (!product) {
+          return res.status(400).json({
+            success: false,
+            message: `Product with ID ${orderItem.product} not found`,
+          });
+        }
+
+        const orderedSize = orderItem.size || '100ML';
+        const orderedQuantity = orderItem.quantity || 1;
+
+        // Check if product has sizes array
+        if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+          const sizeIndex = product.sizes.findIndex(s => 
+            s.size && s.size.toUpperCase() === orderedSize.toUpperCase()
+          );
+
+          if (sizeIndex === -1) {
+            return res.status(400).json({
+              success: false,
+              message: `Size ${orderedSize} not available for product ${product.name}`,
+            });
+          }
+
+          const currentStock = product.sizes[sizeIndex].stockQuantity || 0;
+          
+          if (currentStock < orderedQuantity) {
+            return res.status(400).json({
+              success: false,
+              message: `Insufficient stock for ${product.name} (${orderedSize}). Available: ${currentStock}, Requested: ${orderedQuantity}`,
+            });
+          }
+        } else {
+          const currentStock = product.stockQuantity || 0;
+          
+          if (currentStock < orderedQuantity) {
+            return res.status(400).json({
+              success: false,
+              message: `Insufficient stock for ${product.name}. Available: ${currentStock}, Requested: ${orderedQuantity}`,
+            });
+          }
+        }
+      }
+    }
 
     // Create order
     const order = await Order.create({

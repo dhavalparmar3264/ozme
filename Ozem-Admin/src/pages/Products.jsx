@@ -967,21 +967,6 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
                   )}
                 </div>
               </div>
-
-              {/* Available Quantity */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Available Quantity *
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  value={formData.stockQuantity}
-                  onChange={(e) => handleChange('stockQuantity', parseInt(e.target.value) || 0)}
-                  placeholder="0"
-                  className="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-white"
-                />
-              </div>
             </div>
           </div>
         </div>

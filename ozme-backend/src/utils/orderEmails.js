@@ -15,10 +15,16 @@ export const sendOrderConfirmationEmail = async (order, user) => {
                 `<tr>
           <td style="padding: 10px; border-bottom: 1px solid #eee;">${item.product.name}</td>
           <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₹${item.price.toLocaleString('en-IN')}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₹${(item.price * item.quantity).toLocaleString('en-IN')}</td>
         </tr>`
         )
         .join('');
+    
+    // Calculate subtotal from items
+    const subtotal = order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const discountAmount = order.discountAmount || 0;
+    const shippingCost = 0; // Free shipping
+    const finalTotal = order.totalAmount || (subtotal - discountAmount + shippingCost);
 
     const html = `
     <!DOCTYPE html>
@@ -51,6 +57,7 @@ export const sendOrderConfirmationEmail = async (order, user) => {
             <p><strong>Order ID:</strong> ${order.orderNumber}</p>
             <p><strong>Order Date:</strong> ${new Date(order.createdAt).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
             <p><strong>Payment Method:</strong> ${order.paymentMethod === 'COD' ? 'Cash on Delivery' : 'Online Payment'}</p>
+            ${order.promoCode ? `<p><strong>Promo Code:</strong> ${order.promoCode}</p>` : ''}
             
             <h3 style="margin-top: 20px;">Items Ordered</h3>
             <table>
@@ -65,9 +72,25 @@ export const sendOrderConfirmationEmail = async (order, user) => {
                 ${itemsList}
               </tbody>
               <tfoot>
+                <tr>
+                  <td colspan="2" style="padding: 10px; text-align: right; border-top: 1px solid #eee;">Subtotal:</td>
+                  <td style="padding: 10px; text-align: right; border-top: 1px solid #eee;">₹${subtotal.toLocaleString('en-IN')}</td>
+                </tr>
+                ${discountAmount > 0 ? `
+                <tr>
+                  <td colspan="2" style="padding: 10px; text-align: right; color: #4CAF50;">
+                    ${order.promoCode ? `Discount (${order.promoCode}):` : 'Discount:'}
+                  </td>
+                  <td style="padding: 10px; text-align: right; color: #4CAF50;">-₹${discountAmount.toLocaleString('en-IN')}</td>
+                </tr>
+                ` : ''}
+                <tr>
+                  <td colspan="2" style="padding: 10px; text-align: right;">Shipping:</td>
+                  <td style="padding: 10px; text-align: right; color: #4CAF50;">FREE</td>
+                </tr>
                 <tr class="total-row">
-                  <td colspan="2" style="padding: 15px; text-align: right;">Total Amount:</td>
-                  <td style="padding: 15px; text-align: right;">₹${order.totalAmount.toLocaleString('en-IN')}</td>
+                  <td colspan="2" style="padding: 15px; text-align: right; border-top: 2px solid #333;">Total Amount:</td>
+                  <td style="padding: 15px; text-align: right; border-top: 2px solid #333;">₹${finalTotal.toLocaleString('en-IN')}</td>
                 </tr>
               </tfoot>
             </table>
@@ -104,8 +127,12 @@ Your order has been successfully placed!
 Order ID: ${order.orderNumber}
 Order Date: ${new Date(order.createdAt).toLocaleDateString('en-IN')}
 Payment Method: ${order.paymentMethod === 'COD' ? 'Cash on Delivery' : 'Online Payment'}
+${order.promoCode ? `Promo Code: ${order.promoCode}` : ''}
 
-Total Amount: ₹${order.totalAmount.toLocaleString('en-IN')}
+Subtotal: ₹${subtotal.toLocaleString('en-IN')}
+${discountAmount > 0 ? `${order.promoCode ? `Discount (${order.promoCode}):` : 'Discount:'} -₹${discountAmount.toLocaleString('en-IN')}` : ''}
+Shipping: FREE
+Total Amount: ₹${finalTotal.toLocaleString('en-IN')}
 
 Shipping Address:
 ${order.shippingAddress.name}
