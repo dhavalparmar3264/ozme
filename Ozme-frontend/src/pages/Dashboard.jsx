@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { User, Package, Heart, MapPin, LogOut, Settings, Star, ArrowRight, Sparkles, Crown, Gift, ShoppingBag, X, Plus } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { User, Package, Heart, MapPin, LogOut, Settings, Star, ArrowRight, Sparkles, Crown, Gift, ShoppingBag, X, Plus, Phone, CheckCircle, Lock, AlertCircle, Send } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useWishlist } from '../context/WishlistContext';
 import { apiRequest } from '../utils/api.js';
@@ -41,6 +41,16 @@ export default function LuxuryDashboard() {
   });
   const [isSavingAddress, setIsSavingAddress] = useState(false);
 
+  // Phone verification state
+  const [searchParams] = useSearchParams();
+  const [phoneInput, setPhoneInput] = useState('');
+  const [otpInput, setOtpInput] = useState('');
+  const [showOtpInput, setShowOtpInput] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [otpTimer, setOtpTimer] = useState(0);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+
   // Fetch user data and orders on mount
   useEffect(() => {
     if (!authLoading && user) {
@@ -59,8 +69,129 @@ export default function LuxuryDashboard() {
         email: user.email || '',
         phone: user.phone || '',
       });
+      setPhoneVerified(user.phoneVerified || false);
+      setPhoneInput(user.phone || '');
     }
   }, [user]);
+
+  // Check if redirected from checkout for phone verification
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const verify = searchParams.get('verify');
+    if (tab === 'profile' && verify === 'phone') {
+      setActiveTab('profile');
+      // Show a message about phone verification
+      if (!user?.phoneVerified) {
+        toast('Please verify your phone number to continue checkout', {
+          icon: '📱',
+          duration: 5000,
+        });
+      }
+    }
+  }, [searchParams, user]);
+
+  // OTP Timer countdown
+  useEffect(() => {
+    if (otpTimer > 0) {
+      const timerId = setTimeout(() => setOtpTimer(otpTimer - 1), 1000);
+      return () => clearTimeout(timerId);
+    }
+  }, [otpTimer]);
+
+  // Send OTP for phone verification
+  const handleSendOtp = async () => {
+    const cleanPhone = phoneInput.replace(/\D/g, '').slice(-10);
+    
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      toast.error('Please enter a valid 10-digit Indian mobile number');
+      return;
+    }
+
+    setIsSendingOtp(true);
+    try {
+      const response = await apiRequest('/phone/send-otp', {
+        method: 'POST',
+        body: JSON.stringify({ phone: cleanPhone }),
+      });
+
+      if (response && response.success) {
+        setShowOtpInput(true);
+        setOtpTimer(30); // 30 seconds before resend
+        toast.success('OTP sent to your phone!');
+      } else {
+        throw new Error(response?.message || 'Failed to send OTP');
+      }
+    } catch (error) {
+      toast.error(error.message || 'Failed to send OTP');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  // Verify OTP
+  const handleVerifyOtp = async () => {
+    if (otpInput.length !== 6) {
+      toast.error('Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    try {
+      const response = await apiRequest('/phone/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify({
+          phone: phoneInput.replace(/\D/g, '').slice(-10),
+          otp: otpInput,
+        }),
+      });
+
+      if (response && response.success) {
+        setPhoneVerified(true);
+        setShowOtpInput(false);
+        setProfile(prev => ({ ...prev, phone: response.data.phone }));
+        toast.success('Phone number verified successfully! 🎉');
+        // Refresh user data
+        await checkAuth();
+        
+        // If came from checkout, redirect back
+        const from = searchParams.get('from');
+        if (from === 'checkout') {
+          setTimeout(() => navigate('/checkout'), 1500);
+        }
+      } else {
+        throw new Error(response?.message || 'Invalid OTP');
+      }
+    } catch (error) {
+      toast.error(error.message || 'Failed to verify OTP');
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  // Resend OTP
+  const handleResendOtp = async () => {
+    if (otpTimer > 0) return;
+    
+    setIsSendingOtp(true);
+    try {
+      const response = await apiRequest('/phone/resend-otp', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phoneInput.replace(/\D/g, '').slice(-10) }),
+      });
+
+      if (response && response.success) {
+        setOtpTimer(30);
+        setOtpInput('');
+        toast.success('OTP resent successfully!');
+      } else {
+        throw new Error(response?.message || 'Failed to resend OTP');
+      }
+    } catch (error) {
+      toast.error(error.message || 'Failed to resend OTP');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -388,54 +519,236 @@ export default function LuxuryDashboard() {
           {/* Main Content Area */}
           <main className="lg:col-span-3">
             {activeTab === 'profile' && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="bg-gradient-to-r from-gray-900 to-gray-800 px-8 py-6">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Sparkles className="w-5 h-5 text-amber-400" />
-                    <h2 className="text-2xl font-light text-white">Profile Information</h2>
+              <div className="space-y-6">
+                {/* Profile Information Card */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className="bg-gradient-to-r from-gray-900 to-gray-800 px-8 py-6">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Sparkles className="w-5 h-5 text-amber-400" />
+                      <h2 className="text-2xl font-light text-white">Profile Information</h2>
+                    </div>
+                    <p className="text-gray-400 text-sm">Update your personal details</p>
                   </div>
-                  <p className="text-gray-400 text-sm">Update your personal details</p>
-                </div>
 
-                <form onSubmit={handleSaveProfile}>
-                  <div className="p-8 space-y-6">
-                    {[
-                      { label: 'Full Name', value: profile.name, key: 'name' },
-                      { label: 'Email Address', value: profile.email, key: 'email', type: 'email', disabled: true },
-                      { label: 'Phone Number', value: profile.phone, key: 'phone', type: 'tel' }
-                    ].map((field, idx) => (
-                      <div key={idx} className="group">
+                  <form onSubmit={handleSaveProfile}>
+                    <div className="p-8 space-y-6">
+                      <div className="group">
                         <label className="block text-sm font-medium text-gray-700 mb-2 tracking-wide">
-                          {field.label}
+                          Full Name
                         </label>
                         <input
-                          type={field.type || 'text'}
-                          value={field.value}
-                          disabled={field.disabled}
-                          onChange={(e) => setProfile({ ...profile, [field.key]: e.target.value })}
+                          type="text"
+                          value={profile.name}
+                          onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+                          className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 transition-all duration-300"
+                        />
+                      </div>
+                      <div className="group">
+                        <label className="block text-sm font-medium text-gray-700 mb-2 tracking-wide">
+                          Email Address
+                        </label>
+                        <input
+                          type="email"
+                          value={profile.email}
+                          disabled
                           className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 transition-all duration-300 disabled:bg-gray-50 disabled:cursor-not-allowed"
                         />
                       </div>
-                    ))}
-                    <button
-                      type="submit"
-                      disabled={isSavingProfile}
-                      className="w-full py-4 bg-gradient-to-r from-amber-400 to-amber-500 text-white font-semibold rounded-lg hover:shadow-xl hover:shadow-amber-500/30 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isSavingProfile ? (
-                        <>
-                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                          <span>Saving...</span>
-                        </>
-                      ) : (
-                        <>
-                          Save Changes
-                          <ArrowRight className="w-5 h-5" />
-                        </>
-                      )}
-                    </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingProfile}
+                        className="w-full py-4 bg-gradient-to-r from-amber-400 to-amber-500 text-white font-semibold rounded-lg hover:shadow-xl hover:shadow-amber-500/30 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isSavingProfile ? (
+                          <>
+                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                            <span>Saving...</span>
+                          </>
+                        ) : (
+                          <>
+                            Save Changes
+                            <ArrowRight className="w-5 h-5" />
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Phone Verification Card */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className={`px-8 py-6 ${phoneVerified ? 'bg-gradient-to-r from-green-600 to-green-500' : 'bg-gradient-to-r from-blue-600 to-blue-500'}`}>
+                    <div className="flex items-center gap-3 mb-2">
+                      <Phone className="w-5 h-5 text-white" />
+                      <h2 className="text-2xl font-light text-white">Phone Verification</h2>
+                      {phoneVerified && <CheckCircle className="w-5 h-5 text-white" />}
+                    </div>
+                    <p className="text-white/80 text-sm">
+                      {phoneVerified 
+                        ? 'Your phone number is verified and locked to your account'
+                        : 'Verify your phone number to place orders'
+                      }
+                    </p>
                   </div>
-                </form>
+
+                  <div className="p-8">
+                    {phoneVerified ? (
+                      /* Verified Phone Display */
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-6">
+                        <div className="flex items-center gap-4">
+                          <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center">
+                            <Lock className="w-7 h-7 text-green-600" />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-lg font-semibold text-gray-900">+91 {user?.phone}</span>
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full">
+                                Verified
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-600">
+                              This number is permanently linked to your account
+                            </p>
+                            {user?.phoneVerifiedAt && (
+                              <p className="text-xs text-gray-500 mt-1">
+                                Verified on {new Date(user.phoneVerifiedAt).toLocaleDateString('en-IN', { 
+                                  day: 'numeric', 
+                                  month: 'long', 
+                                  year: 'numeric' 
+                                })}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Phone Verification Form */
+                      <div className="space-y-6">
+                        {/* Warning Banner */}
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+                          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-medium text-amber-800">Phone verification required</p>
+                            <p className="text-xs text-amber-700 mt-1">
+                              You must verify your phone number before placing any orders. Once verified, 
+                              this number will be permanently linked to your account.
+                            </p>
+                          </div>
+                        </div>
+
+                        {!showOtpInput ? (
+                          /* Enter Phone Number */
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Mobile Number
+                              </label>
+                              <div className="flex gap-3">
+                                <div className="flex items-center px-4 py-3 bg-gray-100 border border-gray-200 rounded-lg text-gray-700 font-medium">
+                                  +91
+                                </div>
+                                <input
+                                  type="tel"
+                                  value={phoneInput}
+                                  onChange={(e) => setPhoneInput(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                                  placeholder="Enter 10-digit mobile number"
+                                  maxLength={10}
+                                  className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all duration-300"
+                                />
+                              </div>
+                              <p className="text-xs text-gray-500 mt-2">
+                                We'll send a 6-digit OTP to verify this number
+                              </p>
+                            </div>
+                            <button
+                              onClick={handleSendOtp}
+                              disabled={isSendingOtp || phoneInput.length !== 10}
+                              className="w-full py-4 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-lg hover:shadow-xl hover:shadow-blue-500/30 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isSendingOtp ? (
+                                <>
+                                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                  <span>Sending OTP...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Send className="w-5 h-5" />
+                                  Send OTP
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          /* Enter OTP */
+                          <div className="space-y-4">
+                            <div className="text-center mb-4">
+                              <p className="text-gray-600">
+                                OTP sent to <span className="font-semibold">+91 {phoneInput}</span>
+                              </p>
+                              <button
+                                onClick={() => {
+                                  setShowOtpInput(false);
+                                  setOtpInput('');
+                                }}
+                                className="text-sm text-blue-600 hover:text-blue-700 mt-1"
+                              >
+                                Change number
+                              </button>
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Enter 6-digit OTP
+                              </label>
+                              <input
+                                type="text"
+                                value={otpInput}
+                                onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                placeholder="Enter OTP"
+                                maxLength={6}
+                                className="w-full px-4 py-4 text-center text-2xl font-semibold tracking-[0.5em] border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-400/20 transition-all duration-300"
+                              />
+                            </div>
+
+                            <button
+                              onClick={handleVerifyOtp}
+                              disabled={isVerifyingOtp || otpInput.length !== 6}
+                              className="w-full py-4 bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold rounded-lg hover:shadow-xl hover:shadow-green-500/30 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isVerifyingOtp ? (
+                                <>
+                                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                  <span>Verifying...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="w-5 h-5" />
+                                  Verify OTP
+                                </>
+                              )}
+                            </button>
+
+                            <div className="text-center">
+                              {otpTimer > 0 ? (
+                                <p className="text-sm text-gray-500">
+                                  Resend OTP in <span className="font-semibold text-gray-700">{otpTimer}s</span>
+                                </p>
+                              ) : (
+                                <button
+                                  onClick={handleResendOtp}
+                                  disabled={isSendingOtp}
+                                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                                >
+                                  Didn't receive OTP? Resend
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 

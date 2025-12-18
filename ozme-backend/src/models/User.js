@@ -46,6 +46,16 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String,
       trim: true,
+      unique: true,
+      sparse: true, // Allows multiple null values but unique when set
+      match: [/^[6-9]\d{9}$/, 'Please provide a valid 10-digit Indian phone number'],
+    },
+    phoneVerified: {
+      type: Boolean,
+      default: false,
+    },
+    phoneVerifiedAt: {
+      type: Date,
     },
     role: {
       type: String,

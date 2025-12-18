@@ -188,6 +188,8 @@ export const getMe = async (req, res) => {
           lastName: lastName,
           email: user.email,
           phone: user.phone,
+          phoneVerified: user.phoneVerified || false,
+          phoneVerifiedAt: user.phoneVerifiedAt || null,
           role: user.role,
           photoURL: user.photoURL,
         },

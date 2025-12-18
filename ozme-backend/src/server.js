@@ -1,5 +1,5 @@
+import 'dotenv/config'; // Must be first - loads env vars before other imports
 import express from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import connectDB, { isDBConnected } from './config/db.js';
@@ -25,6 +25,7 @@ import adminCouponRoutes from './routes/adminCouponRoutes.js';
 import adminCategoryRoutes from './routes/adminCategoryRoutes.js';
 import adminReviewRoutes from './routes/adminReviewRoutes.js';
 import adminUserRoutes from './routes/adminUserRoutes.js';
+import phoneRoutes from './routes/phoneRoutes.js';
 
 // Payment, Coupon & Review Routes
 import paymentRoutes from './routes/paymentRoutes.js';
@@ -32,7 +33,7 @@ import couponRoutes from './routes/couponRoutes.js';
 import reviewRoutes from './routes/reviewRoutes.js';
 
 // Load environment variables
-dotenv.config();
+// dotenv is loaded via import 'dotenv/config' at top
 
 // Connect to MongoDB (non-blocking - server will start even if DB is down)
 connectDB().catch((err) => {
@@ -98,6 +99,7 @@ app.use('/api/admin/coupons', adminCouponRoutes);
 app.use('/api/admin/categories', adminCategoryRoutes);
 app.use('/api/admin/reviews', adminReviewRoutes);
 app.use('/api/admin/users', adminUserRoutes);
+app.use('/api/phone', phoneRoutes);
 
 // Error Handling Middleware
 app.use(notFound);
