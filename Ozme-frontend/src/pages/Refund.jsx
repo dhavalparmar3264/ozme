@@ -64,7 +64,7 @@ const RefundPage = () => {
     {
       number: "05",
       title: "Receive Refund",
-      description: "Get your money back in 5-7 days"
+      description: "Get your money credited in 5-7 days"
     }
   ];
 
@@ -349,8 +349,7 @@ const RefundPage = () => {
               <div>
                 <h4 className="font-semibold text-gray-900 mb-2">Exchanges</h4>
                 <p className="leading-relaxed">
-                  If you need to exchange an item for a different product, please return the original item and 
-                  place a new order for the desired product.
+                  All approved replacements and exchanges will be completed and delivered within 15 working days.
                 </p>
               </div>
             </div>

@@ -25,7 +25,7 @@ export default function Footer() {
       { name: 'Grievance Officer', href: '#' },
       { name: 'Our Policies', href: '/privacy' }
     ],
-    availableOn: [
+availableOn: [
       { name: 'Nykaa', href: '#' },
       { name: 'Amazon', href: '#' },
       { name: 'Flipkart', href: '#' },

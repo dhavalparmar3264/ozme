@@ -87,17 +87,17 @@ export const AboutPage = () => {
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <div className="grid md:grid-cols-2 gap-16 items-center">
-            {/* <div className="relative"> */}
-              {/* <div className="aspect-[4/5] overflow-hidden shadow-2xl">
+            <div className="relative">
+              <div className="aspect-[4/5] overflow-hidden shadow-2xl">
                 <img
-                  src="https://images.unsplash.com/photo-15940910387-fea47794261f?w=600&h=800&fit=crop"
+                  src="https://images.unsplash.com/photo-1594035910387-fea47761f?w=600&h=800&fit=crop"
                   alt="Perfume Collection"
                   className="w-full h-full object-cover"
                 />
-              </div> */}
+              </div>
               {/* Decorative Border */}
-              {/* <div className="absolute -bottom-6 -right-6 w-full h-full border-2 border-gray-200 -z-10"></div> */}
-            {/* </div> */}
+              <div className="absolute -bottom-6 -right-6 w-full h-full border-2 border-gray-200 -z-10"></div>
+            </div>
 
             <div className="flex flex-col justify-center">
               {/* Section Label */}
@@ -267,7 +267,58 @@ export const AboutPage = () => {
           <div className="absolute bottom-10 right-10 w-80 h-80 bg-amber-400 rounded-full blur-3xl"></div>
         </div>
 
-       
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
+          {/* Compact Header */}
+          <div className="mb-10">
+            <h2 className="text-4xl md:text-5xl font-light text-white mb-3">
+              <span className="font-serif italic text-amber-300">50,000+</span> Happy Customers
+            </h2>
+            <p className="text-base text-white/70 font-light">
+              Join thousands who trust Ozme Perfumes
+            </p>
+          </div>
+
+          {/* Compact Stats Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Rating Card */}
+            <div className="group relative">
+              <div className="absolute inset-0 bg-white/5 backdrop-blur-sm border border-white/10 group-hover:border-amber-400/30 group-hover:bg-white/10 transition-all duration-300"></div>
+              <div className="relative p-6">
+                <div className="inline-flex items-baseline gap-2 mb-2">
+                  <p className="text-5xl font-light text-white">4.8</p>
+                  <span className="text-2xl text-amber-400">★</span>
+                </div>
+                <div className="h-px w-12 bg-amber-400 mx-auto mb-3"></div>
+                <p className="text-white/90 text-sm font-light">Average Rating</p>
+                <p className="text-white/50 text-xs mt-1">10,000+ reviews</p>
+              </div>
+            </div>
+
+            {/* Products Card - Highlighted */}
+            <div className="group relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-amber-500/15 to-amber-600/10 backdrop-blur-sm border border-amber-400/30 group-hover:border-amber-400/50 transition-all duration-300"></div>
+              <div className="relative p-6">
+                <p className="text-5xl font-light text-amber-300 mb-2">100+</p>
+                <div className="h-px w-12 bg-amber-400 mx-auto mb-3"></div>
+                <p className="text-white text-sm font-medium">Premium Products</p>
+                <p className="text-white/60 text-xs mt-1">Curated collection</p>
+              </div>
+            </div>
+
+            {/* Support Card */}
+            <div className="group relative">
+              <div className="absolute inset-0 bg-white/5 backdrop-blur-sm border border-white/10 group-hover:border-amber-400/30 group-hover:bg-white/10 transition-all duration-300"></div>
+              <div className="relative p-6">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <p className="text-5xl font-light text-white">24/7</p>
+                </div>
+                <div className="h-px w-12 bg-amber-400 mx-auto mb-3"></div>
+                <p className="text-white/90 text-sm font-light">Customer Support</p>
+                <p className="text-white/50 text-xs mt-1">Always here to help</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   );
