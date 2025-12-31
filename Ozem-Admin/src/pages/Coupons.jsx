@@ -1,6 +1,7 @@
 import { Plus, Edit, Trash2, Search, Ticket, TrendingUp, Users, ArrowLeft } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
+import { formatCurrency } from '../utils/format';
 
 const Coupons = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -277,7 +278,7 @@ const Coupons = () => {
                     {getStatusBadge(coupon.status)}
                   </div>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {coupon.type} - {coupon.type === 'Percentage' ? `${coupon.value}%` : `$${coupon.value}`} off
+                    {coupon.type} - {coupon.type === 'Percentage' ? `${coupon.value}%` : `${formatCurrency(coupon.value)}`} off
                   </p>
                   {coupon.description && (
                     <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 italic">
@@ -306,11 +307,11 @@ const Coupons = () => {
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div className="bg-amber-50/50 dark:bg-gray-900/50 rounded-xl p-3 border border-amber-100/20 dark:border-amber-900/20">
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Min Order</p>
-                  <p className="text-lg font-bold text-gray-900 dark:text-white">${coupon.minOrder}</p>
+                  <p className="text-lg font-bold text-gray-900 dark:text-white">{formatCurrency(coupon.minOrder)}</p>
                 </div>
                 <div className="bg-amber-50/50 dark:bg-gray-900/50 rounded-xl p-3 border border-amber-100/20 dark:border-amber-900/20">
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Max Discount</p>
-                  <p className="text-lg font-bold text-gray-900 dark:text-white">${coupon.maxDiscount}</p>
+                  <p className="text-lg font-bold text-gray-900 dark:text-white">{formatCurrency(coupon.maxDiscount)}</p>
                 </div>
                 <div className="bg-amber-50/50 dark:bg-gray-900/50 rounded-xl p-3 border border-amber-100/20 dark:border-amber-900/20">
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Usage</p>
@@ -481,7 +482,7 @@ const AddCouponForm = ({ onBack, editingCoupon, onSave }) => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                    Min Order Amount ($) *
+                    Min Order Amount (₹) *
                   </label>
                   <input
                     type="number"
@@ -494,7 +495,7 @@ const AddCouponForm = ({ onBack, editingCoupon, onSave }) => {
 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                    Max Discount ($) *
+                    Max Discount (₹) *
                   </label>
                   <input
                     type="number"

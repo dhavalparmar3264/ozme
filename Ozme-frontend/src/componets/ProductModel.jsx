@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Plus, Minus, Star, ShoppingCart, Heart, Share2, ChevronLeft, ChevronRight, Truck, Shield, RotateCcw, MessageCircle } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
@@ -8,17 +8,45 @@ const ProductModal = ({ product, onClose }) => {
   const { addToCart } = useCart();
   const { toggleWishlist, isInWishlist } = useWishlist();
   const [quantity, setQuantity] = useState(1);
-  const [selectedSize, setSelectedSize] = useState('100ml');
   const [selectedImage, setSelectedImage] = useState(0);
   const [activeTab, setActiveTab] = useState('description');
+  const [selectedSize, setSelectedSize] = useState(() => {
+    // Initialize selectedSize based on product if available
+    if (product?.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+      return product.sizes[0].value;
+    }
+    return product?.size || '100ML';
+  });
 
   if (!product) return null;
 
-  const sizes = [
-    { value: '100ml', price: Math.round(product.price * 1.8) }
-  ];
+  // Use sizes array from product if available, otherwise create from product.price
+  let sizes = [];
+  if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+    sizes = product.sizes;
+  } else {
+    // Default size based on product.size or '100ML'
+    const defaultSize = product.size || '100ML';
+    sizes = [
+      { value: defaultSize, price: product.price, originalPrice: product.originalPrice || product.price }
+    ];
+  }
 
-  const currentPrice = sizes.find(s => s.value === selectedSize)?.price || Math.round(product.price * 1.8);
+  // Update selectedSize when product changes
+  useEffect(() => {
+    if (product) {
+      if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+        setSelectedSize(product.sizes[0].value);
+      } else {
+        setSelectedSize(product.size || '100ML');
+      }
+    }
+  }, [product]);
+
+  // Find price for selected size (case-insensitive matching)
+  const normalizeSize = (size) => size?.toUpperCase().replace(/ML/g, 'ML');
+  const selectedSizeObj = sizes.find(s => normalizeSize(s.value) === normalizeSize(selectedSize));
+  const currentPrice = selectedSizeObj?.price || (sizes.length > 0 ? sizes[0].price : product.price);
   const images = product.images || [product.image];
 
   const nextImage = () => setSelectedImage((prev) => (prev === images.length - 1 ? 0 : prev + 1));
@@ -114,11 +142,11 @@ const ProductModal = ({ product, onClose }) => {
             <div className="flex items-baseline gap-2 mb-4 pb-4 border-b border-gray-200">
               <span className="text-sm text-gray-400 font-light">₹</span>
               <span className="text-3xl font-light text-gray-900">{currentPrice.toLocaleString('en-IN')}</span>
-              {product.originalPrice && (
+              {product.originalPrice && product.originalPrice > currentPrice && (
                 <>
                   <span className="text-base text-gray-400 line-through font-light">₹{product.originalPrice.toLocaleString('en-IN')}</span>
                   <span className="px-2 py-1 bg-green-50 text-green-700 text-xs font-medium">
-                    {Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)}% OFF
+                    {Math.round(((product.originalPrice - currentPrice) / product.originalPrice) * 100)}% OFF
                   </span>
                 </>
               )}

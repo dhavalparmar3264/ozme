@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { apiRequest } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 
 // Stat Card Component
 const StatCard = ({ title, value, icon: Icon, gradient, trend, loading }) => {
@@ -61,58 +62,52 @@ const StatCard = ({ title, value, icon: Icon, gradient, trend, loading }) => {
 const Dashboard = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [dashboardData, setDashboardData] = useState({
-    summary: {
-      totalOrders: 0,
-      totalRevenue: 0,
-      totalUsers: 0,
-      todaysOrders: 0,
-      todaysRevenue: 0,
-    },
-    topProducts: [],
-    ordersByStatus: {},
+    revenue: 0,
+    totalOrders: 0,
+    pendingOrders: 0,
+    processingOrders: 0,
+    shippedOrders: 0,
+    deliveredOrders: 0,
+    cancelledOrders: 0,
+    totalCustomers: 0,
+    recentOrders: [],
+    lowStockProducts: [],
   });
-  const [recentOrders, setRecentOrders] = useState([]);
-  const [lowStockProducts, setLowStockProducts] = useState([]);
 
-  // Fetch dashboard data
+  // Fetch dashboard data from single endpoint
   const fetchDashboardData = async () => {
     setLoading(true);
+    setError(null);
     try {
-      // Fetch dashboard summary
-      const summaryResponse = await apiRequest('/admin/dashboard/summary');
-      if (summaryResponse?.success) {
-        setDashboardData(summaryResponse.data);
+      const response = await apiRequest('/admin/dashboard/stats');
+      
+      if (response?.success && response.data) {
+        // Safely extract all data with fallbacks
+        setDashboardData({
+          revenue: Number(response.data.revenue) || 0,
+          totalOrders: Number(response.data.totalOrders) || 0,
+          pendingOrders: Number(response.data.pendingOrders) || 0,
+          processingOrders: Number(response.data.processingOrders) || 0,
+          shippedOrders: Number(response.data.shippedOrders) || 0,
+          deliveredOrders: Number(response.data.deliveredOrders) || 0,
+          cancelledOrders: Number(response.data.cancelledOrders) || 0,
+          totalCustomers: Number(response.data.totalCustomers) || 0,
+          recentOrders: Array.isArray(response.data.recentOrders) ? response.data.recentOrders : [],
+          lowStockProducts: Array.isArray(response.data.lowStockProducts) ? response.data.lowStockProducts : [],
+        });
+        setError(null); // Clear any previous errors
+      } else {
+        const errorMsg = response?.message || 'Failed to load dashboard data';
+        setError(errorMsg);
+        toast.error(errorMsg);
       }
-
-      // Fetch recent orders
-      const ordersResponse = await apiRequest('/admin/orders?limit=5');
-      if (ordersResponse?.success) {
-        setRecentOrders(ordersResponse.data.orders || []);
-      }
-
-      // Fetch low stock products
-      const productsResponse = await apiRequest('/admin/products?limit=100');
-      if (productsResponse?.success) {
-        const products = productsResponse.data.products || [];
-        // Filter products with low stock (less than 10 units)
-        const lowStock = products
-          .filter(p => {
-            const totalStock = p.sizes?.reduce((sum, s) => sum + (s.stockQuantity || 0), 0) || p.stockQuantity || 0;
-            return totalStock < 10 && totalStock > 0;
-          })
-          .slice(0, 4)
-          .map(p => ({
-            id: p._id,
-            name: p.name,
-            sku: p._id.toString().slice(-6).toUpperCase(),
-            stock: p.sizes?.reduce((sum, s) => sum + (s.stockQuantity || 0), 0) || p.stockQuantity || 0,
-            threshold: 10,
-          }));
-        setLowStockProducts(lowStock);
-      }
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+      const errorMsg = err.message || err.response?.data?.message || 'Failed to load dashboard data';
+      setError(errorMsg);
+      toast.error(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -150,7 +145,7 @@ const Dashboard = () => {
     );
   };
 
-  const { summary, ordersByStatus } = dashboardData;
+  // No need for this - using dashboardData directly
 
   return (
     <div className="p-6 lg:p-8 space-y-8 bg-gradient-to-br from-gray-50 via-white to-amber-50/30 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 min-h-screen">
@@ -177,30 +172,28 @@ const Dashboard = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Total Revenue"
-          value={formatCurrency(summary.totalRevenue)}
+          value={formatCurrency(dashboardData.revenue)}
           icon={DollarSign}
           gradient="from-amber-400 to-amber-600"
-          trend={summary.todaysRevenue > 0 ? { positive: true, value: `+${formatCurrency(summary.todaysRevenue)}` } : null}
           loading={loading}
         />
         <StatCard
           title="Total Orders"
-          value={summary.totalOrders?.toLocaleString() || '0'}
+          value={(dashboardData.totalOrders || 0).toLocaleString()}
           icon={ShoppingCart}
           gradient="from-emerald-500 to-emerald-600"
-          trend={summary.todaysOrders > 0 ? { positive: true, value: `+${summary.todaysOrders}` } : null}
           loading={loading}
         />
         <StatCard
           title="Pending Orders"
-          value={(ordersByStatus?.Pending || 0).toLocaleString()}
+          value={(dashboardData.pendingOrders || 0).toLocaleString()}
           icon={Clock}
           gradient="from-orange-500 to-orange-600"
           loading={loading}
         />
         <StatCard
           title="Processing Orders"
-          value={(ordersByStatus?.Processing || 0).toLocaleString()}
+          value={(dashboardData.processingOrders || 0).toLocaleString()}
           icon={Truck}
           gradient="from-purple-500 to-pink-600"
           loading={loading}
@@ -211,28 +204,28 @@ const Dashboard = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Delivered Orders"
-          value={(ordersByStatus?.Delivered || 0).toLocaleString()}
+          value={(dashboardData.deliveredOrders || 0).toLocaleString()}
           icon={CheckCircle}
           gradient="from-emerald-500 to-teal-600"
           loading={loading}
         />
         <StatCard
           title="Shipped Orders"
-          value={(ordersByStatus?.Shipped || 0).toLocaleString()}
+          value={(dashboardData.shippedOrders || 0).toLocaleString()}
           icon={Truck}
           gradient="from-blue-500 to-cyan-600"
           loading={loading}
         />
         <StatCard
           title="Total Customers"
-          value={summary.totalUsers?.toLocaleString() || '0'}
+          value={(dashboardData.totalCustomers || 0).toLocaleString()}
           icon={Users}
           gradient="from-blue-500 to-cyan-600"
           loading={loading}
         />
         <StatCard
           title="Cancelled Orders"
-          value={(ordersByStatus?.Cancelled || 0).toLocaleString()}
+          value={(dashboardData.cancelledOrders || 0).toLocaleString()}
           icon={XCircle}
           gradient="from-rose-500 to-pink-600"
           loading={loading}
@@ -258,7 +251,18 @@ const Dashboard = () => {
             <div className="flex items-center justify-center py-16">
               <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
             </div>
-          ) : recentOrders.length === 0 ? (
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center py-16 text-red-500">
+              <AlertTriangle className="w-12 h-12 mb-3" />
+              <p className="mb-4">{error}</p>
+              <button
+                onClick={fetchDashboardData}
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          ) : !dashboardData.recentOrders || dashboardData.recentOrders.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-500">
               <ShoppingCart className="w-12 h-12 mb-3 opacity-30" />
               <p>No orders yet</p>
@@ -275,21 +279,21 @@ const Dashboard = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-amber-100/20 dark:divide-amber-900/20">
-                  {recentOrders.map((order) => (
-                    <tr key={order._id} className="hover:bg-amber-50/50 dark:hover:bg-gray-700/50 transition-colors group">
+                  {dashboardData.recentOrders.map((order, index) => (
+                    <tr key={order?.orderId || `order-${index}`} className="hover:bg-amber-50/50 dark:hover:bg-gray-700/50 transition-colors group">
                       <td className="px-6 py-4">
                         <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                          {order.orderNumber || order._id.toString().slice(-8).toUpperCase()}
+                          {order?.orderId || 'N/A'}
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="text-sm text-gray-700 dark:text-gray-300">{order.user?.name || 'Guest'}</span>
+                        <span className="text-sm text-gray-700 dark:text-gray-300">{order?.customer || 'Guest'}</span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(order.totalAmount)}</span>
+                        <span className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(order?.amount || 0)}</span>
                       </td>
                       <td className="px-6 py-4">
-                        {getStatusBadge(order.orderStatus)}
+                        {getStatusBadge(order?.status || 'Pending')}
                       </td>
                     </tr>
                   ))}
@@ -331,25 +335,30 @@ const Dashboard = () => {
             <div className="flex items-center justify-center py-16">
               <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
             </div>
-          ) : lowStockProducts.length === 0 ? (
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center py-16 text-red-500">
+              <AlertTriangle className="w-12 h-12 mb-3" />
+              <p>{error}</p>
+            </div>
+          ) : !dashboardData.lowStockProducts || dashboardData.lowStockProducts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-500">
               <CheckCircle className="w-12 h-12 mb-3 text-emerald-400" />
               <p className="text-emerald-600 font-medium">All products well stocked!</p>
             </div>
           ) : (
             <div className="p-6 space-y-4">
-              {lowStockProducts.map((product) => (
-                <div key={product.id} className="group flex items-center justify-between p-4 bg-gradient-to-r from-rose-50 to-orange-50 dark:from-rose-900/10 dark:to-orange-900/10 rounded-xl border border-rose-200 dark:border-rose-800/30 hover:shadow-lg transition-all">
+              {dashboardData.lowStockProducts.map((product, index) => (
+                <div key={product?.id || `low-stock-${index}`} className="group flex items-center justify-between p-4 bg-gradient-to-r from-rose-50 to-orange-50 dark:from-rose-900/10 dark:to-orange-900/10 rounded-xl border border-rose-200 dark:border-rose-800/30 hover:shadow-lg transition-all">
                   <div className="flex-1">
-                    <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-1 truncate">{product.name}</h4>
-                    <p className="text-xs text-gray-600 dark:text-gray-400">SKU: {product.sku}</p>
+                    <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-1 truncate">{product?.name || 'Unknown Product'}</h4>
+                    <p className="text-xs text-gray-600 dark:text-gray-400">ID: {product?.id ? product.id.slice(-6).toUpperCase() : 'N/A'}</p>
                   </div>
                   <div className="text-right">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-2xl font-bold text-rose-600 dark:text-rose-400">{product.stock}</span>
+                      <span className="text-2xl font-bold text-rose-600 dark:text-rose-400">{product?.stock || 0}</span>
                       <span className="text-xs text-gray-500 dark:text-gray-400">units</span>
                     </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Min: {product.threshold}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Min: {product?.threshold || 5}</p>
                   </div>
                 </div>
               ))}
@@ -372,5 +381,6 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+
 
 

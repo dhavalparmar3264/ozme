@@ -46,8 +46,13 @@ export default function TrackOrder() {
             backendOrderId: order._id,
             orderNumber: order.orderNumber || `OZME-${order._id.toString().slice(-8).toUpperCase()}`,
             orderDate: order.createdAt,
-            status: order.orderStatus || 'Pending',
+            status: order.deliveryStatus || order.orderStatus || 'Pending', // Use deliveryStatus as primary
+            deliveryStatus: order.deliveryStatus || order.orderStatus || 'Pending',
             trackingNumber: order.trackingNumber,
+            courierName: order.courierName,
+            shippedAt: order.shippedAt,
+            outForDeliveryAt: order.outForDeliveryAt,
+            deliveredAt: order.deliveredAt,
             items: order.items?.map(item => ({
               id: item.product?._id || item.product,
               name: item.product?.name || 'Product',
@@ -69,10 +74,11 @@ export default function TrackOrder() {
             } : {},
             paymentMethod: order.paymentMethod === 'Prepaid' ? 'ONLINE' : 'COD',
             paymentStatus: order.paymentStatus,
-            subtotal: order.totalAmount + (order.discountAmount || 0),
-            shippingCost: 0,
+            subtotal: order.subtotal || (order.totalAmount + (order.discountAmount || 0)),
+            shippingCost: order.shippingCost || 0,
             totalAmount: order.totalAmount,
             discountAmount: order.discountAmount || 0,
+            promoCode: order.promoCode,
           }));
           
           setOrders(transformedOrders);
@@ -81,28 +87,45 @@ export default function TrackOrder() {
           localStorage.setItem('allOrders', JSON.stringify(transformedOrders));
           
           // Check if we need to show a specific order
+          // Priority: orderId (MongoDB ObjectId) > order_id > id > other
           const urlParams = new URLSearchParams(location.search);
           const orderIdentifier = identifier || 
-                                  urlParams.get('orderId') || 
+                                  urlParams.get('orderId') || // Primary: MongoDB ObjectId from CheckoutSuccess
+                                  urlParams.get('order_id') || // PhonePe redirect uses order_id
                                   urlParams.get('id') ||
                                   location.state?.orderId || 
                                   location.state?.trackingNumber;
+          
+          // Validate MongoDB ObjectId format (24 hex characters)
+          const isValidMongoObjectId = (id) => {
+            if (!id || typeof id !== 'string') return false;
+            return /^[0-9a-fA-F]{24}$/.test(id);
+          };
           
           // Ensure we're in list mode if no identifier
           if (!orderIdentifier) {
             setViewMode('list');
             setOrderData(null);
           } else if (orderIdentifier) {
-            const foundOrder = transformedOrders.find(o => 
-              o.orderId === orderIdentifier || 
-              o.backendOrderId === orderIdentifier ||
-              o.trackingNumber === orderIdentifier ||
-              o.orderNumber === orderIdentifier
-            );
+            // Prioritize MongoDB ObjectId matching (backendOrderId or orderId)
+            // This ensures PhonePe redirects with MongoDB _id work correctly
+            const foundOrder = transformedOrders.find(o => {
+              // Exact match on MongoDB ObjectId (most reliable)
+              if (isValidMongoObjectId(orderIdentifier)) {
+                return o.backendOrderId === orderIdentifier || o.orderId === orderIdentifier;
+              }
+              // Fallback to other identifiers
+              return o.orderId === orderIdentifier || 
+                     o.backendOrderId === orderIdentifier ||
+                     o.trackingNumber === orderIdentifier ||
+                     o.orderNumber === orderIdentifier;
+            });
             
             if (foundOrder) {
+              // Auto-open order details when orderId is in URL (from payment redirect)
               setOrderData(foundOrder);
               setViewMode('detail');
+              console.log('✅ Auto-opened order from URL:', orderIdentifier);
             } else {
               // Try to fetch from backend if not in list
               try {
@@ -114,8 +137,13 @@ export default function TrackOrder() {
                     backendOrderId: backendOrder._id,
                     orderNumber: backendOrder.orderNumber || `OZME-${backendOrder._id.toString().slice(-8).toUpperCase()}`,
                     orderDate: backendOrder.createdAt,
-                    status: backendOrder.orderStatus,
+                    status: backendOrder.deliveryStatus || backendOrder.orderStatus || 'Pending',
+                    deliveryStatus: backendOrder.deliveryStatus || backendOrder.orderStatus || 'Pending',
                     trackingNumber: backendOrder.trackingNumber,
+                    courierName: backendOrder.courierName,
+                    shippedAt: backendOrder.shippedAt,
+                    outForDeliveryAt: backendOrder.outForDeliveryAt,
+                    deliveredAt: backendOrder.deliveredAt,
                     items: backendOrder.items?.map(item => ({
                       id: item.product?._id || item.product,
                       name: item.product?.name || 'Product',
@@ -137,10 +165,11 @@ export default function TrackOrder() {
                     },
                     paymentMethod: backendOrder.paymentMethod === 'Prepaid' ? 'ONLINE' : 'COD',
                     paymentStatus: backendOrder.paymentStatus,
-                    subtotal: backendOrder.totalAmount + (backendOrder.discountAmount || 0),
-                    shippingCost: 0,
+                    subtotal: backendOrder.subtotal || (backendOrder.totalAmount + (backendOrder.discountAmount || 0)),
+                    shippingCost: backendOrder.shippingCost || 0,
                     totalAmount: backendOrder.totalAmount,
                     discountAmount: backendOrder.discountAmount || 0,
+                    promoCode: backendOrder.promoCode,
                   };
                   setOrderData(transformedOrder);
                   setViewMode('detail');
@@ -363,12 +392,12 @@ export default function TrackOrder() {
     return days[deliveryDate.getDay()];
   };
 
-  // Get status progress
+  // Get status progress based on deliveryStatus
   const getStatusProgress = () => {
-    const status = orderData?.status || 'Processing';
+    const status = orderData?.deliveryStatus || orderData?.status || 'Pending';
     return {
-      ordered: status === 'Processing' || status === 'Shipped' || status === 'Delivered',
-      shipped: status === 'Shipped' || status === 'Delivered',
+      ordered: status === 'Pending' || status === 'Processing' || status === 'Shipped' || status === 'Out for Delivery' || status === 'Delivered',
+      shipped: status === 'Shipped' || status === 'Out for Delivery' || status === 'Delivered',
       outForDelivery: status === 'Out for Delivery' || status === 'Delivered',
       delivered: status === 'Delivered',
     };
@@ -1013,8 +1042,16 @@ export default function TrackOrder() {
               Arriving {getDeliveryDate()}
             </h1>
             <p className="text-sm text-gray-500">Order ID: {orderData.orderNumber || orderData.orderId}</p>
-            {orderData.trackingNumber && (
-              <p className="text-sm text-gray-500">Tracking Number: {orderData.trackingNumber}</p>
+            {(orderData.courierName || orderData.trackingNumber) && (
+              <p className="text-sm text-gray-500">
+                {orderData.courierName && orderData.trackingNumber 
+                  ? `${orderData.courierName} ${orderData.trackingNumber}`
+                  : orderData.trackingNumber 
+                    ? `Tracking Number: ${orderData.trackingNumber}`
+                    : orderData.courierName
+                      ? `Courier: ${orderData.courierName}`
+                      : ''}
+              </p>
             )}
           </div>
           
@@ -1184,8 +1221,16 @@ export default function TrackOrder() {
             <h3 className="text-base font-semibold text-gray-900 mb-4">Order Info</h3>
             <div className="space-y-3">
               <div className="text-sm text-gray-600">
-                <span className="font-medium">Status:</span> {orderData.status}
+                <span className="font-medium">Status:</span> {orderData.deliveryStatus || orderData.status}
               </div>
+              {(orderData.courierName || orderData.trackingNumber) && (
+                <div className="text-sm text-gray-600">
+                  <span className="font-medium">Tracking:</span>{' '}
+                  {orderData.courierName && orderData.trackingNumber 
+                    ? `${orderData.courierName} ${orderData.trackingNumber}`
+                    : orderData.trackingNumber || orderData.courierName}
+                </div>
+              )}
               <div className="text-sm text-gray-600">
                 <span className="font-medium">Payment:</span> {orderData.paymentMethod === 'COD' ? 'Cash on Delivery' : 'Online Payment'}
               </div>
@@ -1247,16 +1292,21 @@ export default function TrackOrder() {
                   {orderData.shippingCost === 0 ? 'FREE' : `₹${orderData.shippingCost?.toLocaleString('en-IN')}`}
                 </span>
               </div>
+              {orderData.discountAmount > 0 && (
+                <div className="flex justify-between text-sm text-gray-600">
+                  <span>Discount {orderData.promoCode && `(${orderData.promoCode})`}</span>
+                  <span className="font-medium text-green-600">
+                    -₹{orderData.discountAmount.toLocaleString('en-IN')}
+                  </span>
+                </div>
+              )}
             </div>
             <div className="flex justify-between items-center pt-4 border-t border-gray-200">
               <span className="text-lg font-semibold text-gray-900">Total</span>
               <div className="text-right">
-                <div className="flex items-baseline gap-1">
-                  <span className="text-sm text-gray-500">₹</span>
-                  <span className="text-2xl font-semibold text-gray-900">
-                    {orderData.totalAmount?.toLocaleString('en-IN') || '0'}
-                  </span>
-                </div>
+                <span className="text-2xl font-semibold text-gray-900">
+                  ₹{orderData.totalAmount?.toLocaleString('en-IN') || '0'}
+                </span>
                 <p className="text-xs text-gray-500 mt-1">Inclusive of all taxes</p>
               </div>
             </div>

@@ -64,34 +64,51 @@ const userSchema = new mongoose.Schema(
     },
     addresses: [
       {
-        type: {
+        firstName: {
           type: String,
           required: true,
-          enum: ['Home', 'Office', 'Other'],
+          trim: true,
         },
-        name: {
+        lastName: {
           type: String,
           required: true,
+          trim: true,
+        },
+        email: {
+          type: String,
+          required: true,
+          trim: true,
+          lowercase: true,
         },
         phone: {
           type: String,
           required: true,
+          trim: true,
         },
-        address: {
+        street: {
           type: String,
           required: true,
+          trim: true,
+        },
+        apartment: {
+          type: String,
+          trim: true,
+          default: '',
         },
         city: {
           type: String,
           required: true,
+          trim: true,
         },
         state: {
           type: String,
           required: true,
+          trim: true,
         },
-        pincode: {
+        pinCode: {
           type: String,
           required: true,
+          trim: true,
         },
         country: {
           type: String,
@@ -100,6 +117,10 @@ const userSchema = new mongoose.Schema(
         isDefault: {
           type: Boolean,
           default: false,
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now,
         },
       },
     ],

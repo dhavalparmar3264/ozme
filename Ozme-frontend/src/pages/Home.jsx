@@ -241,10 +241,48 @@ export default function Home() {
     }
   ];
 
-  const handleNewsletterSubmit = (e) => {
+  const handleNewsletterSubmit = async (e) => {
     e.preventDefault();
-    alert('🎉 Successfully subscribed! Welcome to Ozme Perfumes family');
-    setEmail('');
+    
+    if (!email || !email.trim()) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+
+    // Basic email validation
+    const emailRegex = /^\S+@\S+\.\S+$/;
+    if (!emailRegex.test(email.trim())) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+
+    try {
+      const response = await apiRequest('/newsletter/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      if (response && response.success) {
+        toast.success(response.message || '🎉 Successfully subscribed! Welcome to OZME Perfumes family');
+        setEmail('');
+      } else {
+        const errorMsg = response?.message || 'Failed to subscribe. Please try again.';
+        console.error('Newsletter subscription failed:', {
+          status: 'unknown',
+          message: errorMsg,
+          response
+        });
+        toast.error(errorMsg);
+      }
+    } catch (error) {
+      console.error('Newsletter subscription error:', {
+        message: error.message,
+        status: error.response?.status,
+        response: error.response?.data
+      });
+      const errorMsg = error.response?.data?.message || error.message || 'Failed to subscribe. Please try again.';
+      toast.error(errorMsg);
+    }
   };
 
   const handleAddToCart = (product, quantity) => {
@@ -582,21 +620,22 @@ export default function Home() {
             Subscribe and get 10% off your first order
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-4 max-w-md mx-auto">
+          <form onSubmit={handleNewsletterSubmit} className="flex flex-col sm:flex-row gap-4 max-w-md mx-auto">
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Enter your email"
               className="flex-1 px-6 py-4 rounded-full bg-white/10 border border-white/20 text-white placeholder-gray-400 focus:outline-none focus:border-white/40 backdrop-blur-sm"
+              required
             />
             <button
-              onClick={handleNewsletterSubmit}
-              className="px-8 py-4 bg-white text-gray-900 font-semibold rounded-full hover:bg-gray-100 transition-all duration-300 shadow-lg whitespace-nowrap"
+              type="submit"
+              className="px-8 py-4 bg-white text-gray-900 font-semibold rounded-full hover:bg-gray-100 transition-all duration-300 shadow-lg whitespace-nowrap cursor-pointer"
             >
               Subscribe
             </button>
-          </div>
+          </form>
         </div>
       </section>
 

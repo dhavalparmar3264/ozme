@@ -26,6 +26,7 @@ import Terms from './pages/Terms';
 import Shipping from './pages/Shipping';
 import FAQ from './pages/FAQ';
 import TrackOrder from './pages/TrackOrder';
+import CheckoutSuccess from './pages/CheckoutSuccess';
 import SearchResults from './pages/SearchResults';
 import { useState } from 'react';
 
@@ -134,6 +135,11 @@ function AppContent() {
           <Route path="/checkout" element={
             <ProtectedRoute>
               <Checkout />
+            </ProtectedRoute>
+          } />
+          <Route path="/checkout/success" element={
+            <ProtectedRoute>
+              <CheckoutSuccess />
             </ProtectedRoute>
           } />
           <Route path="/track-order" element={

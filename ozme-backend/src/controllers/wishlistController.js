@@ -23,9 +23,21 @@ export const getWishlist = async (req, res) => {
 
     const items = await WishlistItem.find(query).populate('product');
 
+    // Filter out items with null/deleted products
+    const validItems = items.filter(item => item.product && item.product._id);
+
+    // Remove invalid items from database
+    const invalidItemIds = items
+      .filter(item => !item.product || !item.product._id)
+      .map(item => item._id);
+    
+    if (invalidItemIds.length > 0) {
+      await WishlistItem.deleteMany({ _id: { $in: invalidItemIds } });
+    }
+
     res.json({
       success: true,
-      data: { items },
+      data: { items: validItems },
     });
   } catch (error) {
     res.status(500).json({

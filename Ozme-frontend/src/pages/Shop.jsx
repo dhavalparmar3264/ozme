@@ -18,12 +18,9 @@ function ShopPage({ onProductClick, onQuickView }) {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [categories, setCategories] = useState([]);
   const [filters, setFilters] = useState({
-    category: 'all',
     priceRange: [0, 5000],
     rating: 0,
-    gender: 'all',
     sortBy: 'popularity'
   });
 
@@ -32,17 +29,6 @@ function ShopPage({ onProductClick, onQuickView }) {
     fetchProducts();
   }, [filters, searchQuery]);
 
-  // Extract unique categories from products
-  useEffect(() => {
-    if (products.length > 0) {
-      const uniqueCategories = [...new Set(products.map(p => p.category).filter(Boolean))];
-      setCategories(uniqueCategories.map((cat, idx) => ({
-        id: idx + 1,
-        name: cat,
-        slug: cat.toLowerCase().replace(/\s+/g, '-')
-      })));
-    }
-  }, [products]);
 
   const fetchProducts = async () => {
     try {
@@ -52,13 +38,10 @@ function ShopPage({ onProductClick, onQuickView }) {
       // Build query parameters for backend
       const params = new URLSearchParams();
       
+      // Force all products to be unisex
+      params.append('gender', 'Unisex');
+      
       // Apply filters
-      if (filters.category !== 'all') {
-        params.append('category', filters.category);
-      }
-      if (filters.gender !== 'all') {
-        params.append('gender', filters.gender.charAt(0).toUpperCase() + filters.gender.slice(1));
-      }
       if (filters.priceRange[0] > 0) {
         params.append('minPrice', filters.priceRange[0].toString());
       }
@@ -81,28 +64,57 @@ function ShopPage({ onProductClick, onQuickView }) {
         // Transform backend products to frontend format
         const transformedProducts = response.data.products
           .filter(product => product.active && product.inStock) // Only show active, in-stock products
-          .map(product => ({
-            id: product._id,
-            _id: product._id,
-            name: product.name,
-            price: product.price,
-            originalPrice: product.originalPrice || product.price,
-            discount: product.originalPrice && product.price
-              ? Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)
-              : 0,
-            rating: product.rating || 0,
-            reviews: product.reviewsCount || 0,
-            category: product.category || '',
-            gender: product.gender?.toLowerCase() || 'unisex',
-            images: product.images && product.images.length > 0 ? product.images : ['https://via.placeholder.com/400x600?text=No+Image'],
-            tag: product.tag || null,
-            bestseller: product.tag === 'Bestseller',
-            description: product.description || '',
-            shortDescription: product.shortDescription || '',
-            inStock: product.inStock,
-            stockQuantity: product.stockQuantity || 0,
-            size: product.size || '100ML'
-          }));
+          .map(product => {
+            // Handle sizes array if available, otherwise use single size
+            let sizes = [];
+            if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+              sizes = product.sizes.map(s => ({
+                value: s.size,
+                label: s.size,
+                price: s.price,
+                originalPrice: s.originalPrice || s.price,
+                stockQuantity: s.stockQuantity || 0,
+                inStock: s.inStock !== undefined ? s.inStock : (s.stockQuantity > 0),
+              }));
+            } else {
+              sizes = [{
+                value: product.size || '100ML',
+                label: product.size || '100ML',
+                price: product.price,
+                originalPrice: product.originalPrice || product.price,
+                stockQuantity: product.stockQuantity || 0,
+                inStock: product.inStock !== undefined ? product.inStock : (product.stockQuantity > 0),
+              }];
+            }
+
+            // Use first size's price for display
+            const displayPrice = sizes.length > 0 ? sizes[0].price : product.price;
+            const displayOriginalPrice = sizes.length > 0 ? sizes[0].originalPrice : (product.originalPrice || product.price);
+
+            return {
+              id: product._id,
+              _id: product._id,
+              name: product.name,
+              price: displayPrice,
+              originalPrice: displayOriginalPrice,
+              discount: displayOriginalPrice && displayPrice
+                ? Math.round(((displayOriginalPrice - displayPrice) / displayOriginalPrice) * 100)
+                : 0,
+              rating: product.rating || 0,
+              reviews: product.reviewsCount || 0,
+              category: product.category || '',
+              gender: 'unisex', // All products are treated as unisex
+              images: product.images && product.images.length > 0 ? product.images : ['https://via.placeholder.com/400x600?text=No+Image'],
+              tag: product.tag || null,
+              bestseller: product.tag === 'Bestseller',
+              description: product.description || '',
+              shortDescription: product.shortDescription || '',
+              inStock: product.inStock,
+              stockQuantity: product.stockQuantity || 0,
+              size: sizes.length > 0 ? sizes[0].value : (product.size || '100ML'),
+              sizes: sizes // Include sizes array for modal
+            };
+          });
 
         setProducts(transformedProducts);
       } else {
@@ -117,14 +129,8 @@ function ShopPage({ onProductClick, onQuickView }) {
     }
   };
 
-  // Filter products client-side for additional filtering (e.g., category dropdown)
-  const filteredProducts = products.filter(product => {
-    // Category filter (if using category dropdown instead of backend)
-    if (filters.category !== 'all' && product.category.toLowerCase() !== filters.category.toLowerCase()) {
-      return false;
-    }
-    return true;
-  });
+  // All products are already filtered by backend (unisex only)
+  const filteredProducts = products;
 
   const sortedProducts = [...filteredProducts].sort((a, b) => {
     switch (filters.sortBy) {
@@ -143,7 +149,7 @@ function ShopPage({ onProductClick, onQuickView }) {
   };
 
   const resetFilters = () => setFilters({
-    category: 'all', priceRange: [0, 5000], rating: 0, gender: 'all', sortBy: 'popularity'
+    priceRange: [0, 5000], rating: 0, sortBy: 'popularity'
   });
 
   return (
@@ -198,30 +204,6 @@ function ShopPage({ onProductClick, onQuickView }) {
                   )}
                 </div>
                 <div className="space-y-6 sm:space-y-8">
-                  {/* Category Filter */}
-                  <div>
-                    <label className="block text-xs font-semibold mb-2 sm:mb-3 text-gray-900 uppercase tracking-widest">Category</label>
-                    <select value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })}
-                      className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base border-2 border-gray-200 focus:border-gray-900 focus:outline-none transition-all">
-                      <option value="all">All Categories</option>
-                      {categories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
-                    </select>
-                  </div>
-                  {/* Gender Filter */}
-                  <div>
-                    <label className="block text-xs font-semibold mb-2 sm:mb-3 text-gray-900 uppercase tracking-widest">Gender</label>
-                    <div className="space-y-2">
-                      {['all', 'men', 'women', 'unisex'].map(gender => (
-                        <label key={gender} className="flex items-center gap-2 sm:gap-3 cursor-pointer group">
-                          <input type="radio" name="gender" value={gender} checked={filters.gender === gender}
-                            onChange={(e) => setFilters({ ...filters, gender: e.target.value })} className="w-4 h-4 text-gray-900" />
-                          <span className="text-xs sm:text-sm text-gray-700 group-hover:text-gray-900 capitalize">
-                            {gender === 'all' ? 'All Fragrances' : gender}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
                   {/* Price Range */}
                   <div>
                     <label className="block text-xs font-semibold mb-2 sm:mb-3 text-gray-900 uppercase tracking-widest">Price Range</label>

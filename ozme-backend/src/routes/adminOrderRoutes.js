@@ -14,9 +14,11 @@ const router = express.Router();
 router.use(adminProtect);
 
 const statusValidation = [
-  body('orderStatus').optional().isIn(['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled']),
+  body('orderStatus').optional().isIn(['Pending', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled']),
+  body('deliveryStatus').optional().isIn(['Pending', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled']),
   body('paymentStatus').optional().isIn(['Pending', 'Paid', 'Failed', 'Refunded']),
-  body('trackingNumber').optional().isString(),
+  body('trackingNumber').optional().isString().isLength({ max: 100 }),
+  body('courierName').optional().isString().isLength({ max: 100 }),
 ];
 
 router.get('/', getAdminOrders);

@@ -209,7 +209,7 @@ export const validateCoupon = async (req, res) => {
             });
         }
 
-        // Check per user limit
+        // Check per user limit (only if user is authenticated)
         if (req.user && !coupon.canUserUse(req.user.id)) {
             return res.status(400).json({
                 success: false,

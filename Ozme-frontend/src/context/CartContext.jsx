@@ -205,7 +205,7 @@ export const CartProvider = ({ children }) => {
         return updatedCart;
       });
 
-      toast.success(`${product.name}${size ? ` (${size})` : ''} quantity updated in cart!`, { id: 'cart-add-toast' });
+      toast.success(`Cart updated`, { id: 'cart-add-toast' });
 
       // Update backend
       if (existingItem._id) {
@@ -237,7 +237,7 @@ export const CartProvider = ({ children }) => {
 
       // Optimistic update
       setCart((prevCart) => [...prevCart, newItem]);
-      toast.success(`${product.name}${size ? ` (${size})` : ''} added to cart!`, { id: 'cart-add-toast' });
+      toast.success(`Added to cart`, { id: 'cart-add-toast' });
 
       // Add to backend
       try {

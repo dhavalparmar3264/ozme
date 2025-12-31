@@ -9,12 +9,14 @@ export const AuthProvider = ({ children }) => {
 
   /**
    * Check authentication status on app load
+   * Note: Using sessionStorage - token cleared on tab close/refresh
    */
   const checkAuth = async () => {
     try {
-      const token = localStorage.getItem('adminToken');
+      const token = sessionStorage.getItem('adminToken');
       if (!token) {
         setLoading(false);
+        setUser(null);
         return;
       }
 
@@ -23,12 +25,12 @@ export const AuthProvider = ({ children }) => {
         setUser(response.data.user);
       } else {
         // Invalid token or backend unavailable
-        localStorage.removeItem('adminToken');
+        sessionStorage.removeItem('adminToken');
         setUser(null);
       }
     } catch (error) {
       console.error('Auth check error:', error);
-      localStorage.removeItem('adminToken');
+      sessionStorage.removeItem('adminToken');
       setUser(null);
     } finally {
       setLoading(false);
@@ -48,7 +50,8 @@ export const AuthProvider = ({ children }) => {
 
       if (response && response.success) {
         const token = response.data.token;
-        localStorage.setItem('adminToken', token);
+        // Store in sessionStorage - cleared on tab close/refresh
+        sessionStorage.setItem('adminToken', token);
         setUser(response.data.user);
         return true;
       } else {
@@ -63,7 +66,7 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       // Call backend logout endpoint if token exists
-      const token = localStorage.getItem('adminToken');
+      const token = sessionStorage.getItem('adminToken');
       if (token) {
         await apiRequest('/admin/auth/logout', {
           method: 'POST',
@@ -72,7 +75,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      localStorage.removeItem('adminToken');
+      sessionStorage.removeItem('adminToken');
       setUser(null);
     }
   };

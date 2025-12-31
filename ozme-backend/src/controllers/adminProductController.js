@@ -467,7 +467,7 @@ export const updateAdminProduct = async (req, res) => {
 };
 
 /**
- * Delete/Deactivate product
+ * Delete product permanently (hard delete)
  * @route DELETE /api/admin/products/:id
  */
 export const deleteAdminProduct = async (req, res) => {
@@ -481,15 +481,15 @@ export const deleteAdminProduct = async (req, res) => {
       });
     }
 
-    // Soft delete by setting active to false
-    product.active = false;
-    await product.save();
+    // Hard delete - permanently remove from database
+    await Product.findByIdAndDelete(req.params.id);
 
     res.json({
       success: true,
-      message: 'Product deactivated successfully',
+      message: 'Product deleted successfully',
     });
   } catch (error) {
+    console.error('Delete product error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Server error',

@@ -148,7 +148,7 @@ export const getAdminOrder = async (req, res) => {
  */
 export const updateAdminOrderStatus = async (req, res) => {
   try {
-    const { orderStatus, paymentStatus, trackingNumber } = req.body;
+    const { orderStatus, deliveryStatus, paymentStatus, trackingNumber, courierName } = req.body;
 
     const order = await Order.findById(req.params.id).populate('items.product');
 
@@ -161,21 +161,77 @@ export const updateAdminOrderStatus = async (req, res) => {
 
     const previousOrderStatus = order.orderStatus;
     const previousPaymentStatus = order.paymentStatus;
+    const previousDeliveryStatus = order.deliveryStatus;
 
     // Check if order is being confirmed (moving to Processing) and stock hasn't been reduced yet
     const isBeingConfirmed = (orderStatus === 'Processing' && previousOrderStatus === 'Pending') ||
                              (paymentStatus === 'Paid' && previousPaymentStatus !== 'Paid' && order.orderStatus === 'Pending');
 
+    // Update orderStatus (legacy field, keep for backward compatibility)
     if (orderStatus) {
       order.orderStatus = orderStatus;
+    }
+    
+    // Update deliveryStatus (primary field for shipping tracking)
+    if (deliveryStatus) {
+      // Validate deliveryStatus
+      const validStatuses = ['Pending', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled'];
+      if (!validStatuses.includes(deliveryStatus)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid deliveryStatus. Must be one of: ${validStatuses.join(', ')}`,
+        });
+      }
+      
+      order.deliveryStatus = deliveryStatus;
+      
+      // Set timestamps based on deliveryStatus (idempotent - only set if not already set)
+      const now = new Date();
+      if (deliveryStatus === 'Shipped' && !order.shippedAt) {
+        order.shippedAt = now;
+      } else if (deliveryStatus === 'Out for Delivery' && !order.outForDeliveryAt) {
+        order.outForDeliveryAt = now;
+      } else if (deliveryStatus === 'Delivered' && !order.deliveredAt) {
+        order.deliveredAt = now;
+      }
+      
+      // Sync orderStatus with deliveryStatus for backward compatibility
+      if (orderStatus === undefined) {
+        order.orderStatus = deliveryStatus;
+      }
     }
     
     if (paymentStatus) {
       order.paymentStatus = paymentStatus;
     }
     
+    // Update shipping information
     if (trackingNumber !== undefined) {
+      // Validate trackingNumber length
+      if (trackingNumber && trackingNumber.length > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tracking number must be 100 characters or less',
+        });
+      }
       order.trackingNumber = trackingNumber;
+    }
+    
+    if (courierName !== undefined) {
+      // Validate courierName
+      if (courierName && typeof courierName !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: 'Courier name must be a string',
+        });
+      }
+      if (courierName && courierName.length > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Courier name must be 100 characters or less',
+        });
+      }
+      order.courierName = courierName;
     }
 
     // Reduce stock if order is being confirmed for the first time
@@ -194,6 +250,13 @@ export const updateAdminOrderStatus = async (req, res) => {
 
     await order.populate('user', 'name email');
     await order.populate('items.product');
+
+    console.log(`✅ Order ${order._id} status updated:`, {
+      orderStatus: order.orderStatus,
+      deliveryStatus: order.deliveryStatus,
+      courierName: order.courierName,
+      trackingNumber: order.trackingNumber,
+    });
 
     res.json({
       success: true,

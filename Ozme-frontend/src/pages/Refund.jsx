@@ -303,7 +303,7 @@ const RefundPage = () => {
             <div className="p-8 bg-white/5 backdrop-blur-sm rounded-lg border border-white/10 hover:bg-white/10 transition-all duration-300">
               <Phone className="w-10 h-10 text-amber-300 mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Call Us</h3>
-              <p className="text-white/60 text-sm mb-3">+91 87340 03264</p>
+              <p className="text-white/60 text-sm mb-3">+91 92 74 74 3264</p>
             </div>
 
             <div className="p-8 bg-white/5 backdrop-blur-sm rounded-lg border border-white/10 hover:bg-white/10 transition-all duration-300">

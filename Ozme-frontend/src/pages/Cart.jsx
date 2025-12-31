@@ -40,13 +40,6 @@ export default function CartPage() {
             return;
         }
 
-        // Check if user is authenticated (required for backend validation)
-        if (!isAuthenticated) {
-            toast.error('Please login to apply promo codes');
-            navigate('/login', { state: { from: '/cart' } });
-            return;
-        }
-
         setIsValidatingPromo(true);
 
         try {
@@ -344,16 +337,13 @@ export default function CartPage() {
 
                                     {/* Total */}
                                     <div className="border-t-2 border-gray-200 pt-3 sm:pt-4 mt-3 sm:mt-4">
-                                        <div className="flex justify-between items-baseline gap-2">
-                                            <span className="text-lg sm:text-xl font-light text-gray-900">Total</span>
-                                            <div className="text-right">
-                                                <div className="flex items-baseline gap-1 sm:gap-2">
-                                                    <span className="text-xs sm:text-sm text-gray-500">₹</span>
-                                                    <span className="text-2xl sm:text-3xl md:text-4xl font-light text-gray-900">
-                                                        {total.toLocaleString('en-IN')}
-                                                    </span>
-                                                </div>
-                                                <p className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1">Inclusive of all taxes</p>
+                                        <div className="flex justify-between items-start gap-2 sm:gap-4">
+                                            <span className="text-base sm:text-lg font-normal text-gray-900 pt-1">Total</span>
+                                            <div className="text-right flex-shrink-0">
+                                                <p className="text-2xl sm:text-3xl md:text-4xl font-light text-gray-900 leading-none whitespace-nowrap">
+                                                    ₹{total.toLocaleString('en-IN')}
+                                                </p>
+                                                <p className="text-[10px] sm:text-xs text-gray-500 mt-1 sm:mt-1.5">Inclusive of all taxes</p>
                                             </div>
                                         </div>
                                     </div>

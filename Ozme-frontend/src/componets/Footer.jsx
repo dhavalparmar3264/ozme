@@ -77,11 +77,11 @@ availableOn: [
               </a>
 
               <div className="flex flex-col gap-3">
-                <a href="tel:+918734003264" className="flex items-center gap-3 text-sm text-gray-400 hover:text-white transition-colors group">
+                <a href="tel:+919274743264" className="flex items-center gap-3 text-sm text-gray-400 hover:text-white transition-colors group">
                   <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-white/10 transition-colors">
                     <Phone className="w-5 h-5" />
                   </div>
-                  <span>+91 87340 03264</span>
+                  <span>+91 92 74 74 3264</span>
                 </a>
 
                 <a 
@@ -219,17 +219,6 @@ availableOn: [
               © {currentYear} Ozme Perfumes. All rights reserved.
             </p>
 
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <span>Designed & Developed by</span>
-              <a 
-                href="http://creativewebcrafters.site/" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-amber-400 hover:text-amber-300 transition-colors font-medium"
-              >
-                Creative WebCrafters
-              </a>
-            </div>
 
             <div className="flex flex-wrap items-center justify-center gap-4 text-sm">
               <a href="#" className="text-gray-400 hover:text-white transition-colors">

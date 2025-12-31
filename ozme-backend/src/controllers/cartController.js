@@ -23,15 +23,27 @@ export const getCart = async (req, res) => {
 
     const items = await CartItem.find(query).populate('product');
 
-    // Calculate total
-    const total = items.reduce((sum, item) => {
-      return sum + item.product.price * item.quantity;
+    // Filter out items with null/deleted products and calculate total
+    const validItems = items.filter(item => item.product && item.product.price !== null && item.product.price !== undefined);
+    
+    // Remove invalid items from database
+    const invalidItemIds = items
+      .filter(item => !item.product || item.product.price === null || item.product.price === undefined)
+      .map(item => item._id);
+    
+    if (invalidItemIds.length > 0) {
+      await CartItem.deleteMany({ _id: { $in: invalidItemIds } });
+    }
+
+    // Calculate total from valid items only
+    const total = validItems.reduce((sum, item) => {
+      return sum + (item.product?.price || 0) * (item.quantity || 0);
     }, 0);
 
     res.json({
       success: true,
       data: {
-        items,
+        items: validItems,
         total,
       },
     });

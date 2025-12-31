@@ -189,7 +189,7 @@ export const products = [
   },
   {
     id: 5,
-    name: "Rose Romance EDP",
+    name: "Rose Romance Extrait de Parfum",
     price: 429,
     originalPrice: 999,
     discount: 57,

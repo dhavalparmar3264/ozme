@@ -1,6 +1,7 @@
-import { Plus, Edit, Trash2, Search, Package, TrendingUp, AlertCircle, Filter, ArrowLeft, X } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, Package, TrendingUp, AlertCircle, Filter, ArrowLeft, X, AlertTriangle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
+import toast from 'react-hot-toast';
 
 const Products = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -9,6 +10,7 @@ const Products = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { productId, productName }
 
   // Fetch products from backend
   useEffect(() => {
@@ -62,24 +64,80 @@ const Products = () => {
   );
 
   const handleDelete = async (productId) => {
-    if (!window.confirm('Are you sure you want to delete this product?')) {
+    const product = products.find(p => p.id === productId || p._id === productId);
+    if (!product) {
+      toast.error('Product not found');
       return;
     }
 
+    // Show confirmation modal
+    setDeleteConfirm({
+      productId,
+      productName: product.name,
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+
+    const { productId } = deleteConfirm;
+    const productName = deleteConfirm.productName;
+
+    // Show loading toast
+    const deleteToast = toast.loading('Deleting product...');
+
     try {
-      const response = await apiRequest(`/admin/products/${productId}`, {
+      // Log the request URL for debugging
+      const apiUrl = `/admin/products/${productId}`;
+      console.log('Delete request URL:', apiUrl);
+      console.log('Delete product ID:', productId);
+
+      // Call API to delete - await success before updating UI
+      const response = await apiRequest(apiUrl, {
         method: 'DELETE',
       });
 
+      console.log('Delete response:', response);
+
+      // Only proceed if response indicates success
       if (response && response.success) {
-        setProducts(products.filter(p => p.id !== productId && p._id !== productId));
+        // Remove from UI only after successful delete
+        setProducts(prevProducts => 
+          prevProducts.filter(p => p.id !== productId && p._id !== productId)
+        );
+
+        // Close confirmation modal
+        setDeleteConfirm(null);
+
+        // Show success toast
+        toast.success(`Product deleted successfully`, { id: deleteToast });
+
+        // Refetch products to ensure consistency with backend
+        await fetchProducts();
       } else {
-        alert(response?.message || 'Failed to delete product');
+        // API call failed - don't remove from UI
+        const errorMsg = response?.message || 'Failed to delete product';
+        console.error('Delete failed:', errorMsg);
+        toast.error(errorMsg, { id: deleteToast });
+        // Keep modal open so user can retry
       }
     } catch (err) {
       console.error('Error deleting product:', err);
-      alert(err.message || 'Failed to delete product');
+      console.error('Error details:', {
+        message: err.message,
+        response: err.response,
+        url: `/admin/products/${productId}`,
+      });
+      
+      // Don't remove from UI on error
+      const errorMsg = err.message || err.response?.data?.message || 'Failed to delete product';
+      toast.error(errorMsg, { id: deleteToast });
+      // Keep modal open so user can retry
     }
+  };
+
+  const cancelDelete = () => {
+    setDeleteConfirm(null);
   };
 
   const handleEdit = (product) => {
@@ -331,6 +389,45 @@ const Products = () => {
           </table>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-sm w-full mx-4 p-5 border border-amber-100/20 dark:border-amber-900/20">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+                  Delete product?
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                  This can't be undone.
+                </p>
+                <p className="text-sm text-gray-700 dark:text-gray-300 truncate" title={deleteConfirm.productName}>
+                  {deleteConfirm.productName}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={cancelDelete}
+                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-all font-medium text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all font-medium text-sm"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -554,11 +651,11 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
       });
 
       // Send request
-      const apiUrl = `${import.meta.env.VITE_API_BASE_URL || 'http://82.112.231.165:3002/api'}/admin/products${editingProduct ? `/${editingProduct._id}` : ''}`;
+      const apiUrl = `${import.meta.env.VITE_API_BASE_URL || 'https://ozme.in/api'}/admin/products${editingProduct ? `/${editingProduct._id}` : ''}`;
       const response = await fetch(apiUrl, {
         method: editingProduct ? 'PUT' : 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
+          'Authorization': `Bearer ${sessionStorage.getItem('adminToken')}`,
         },
         body: formDataToSend,
       });

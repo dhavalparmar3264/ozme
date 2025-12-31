@@ -4,12 +4,32 @@
  */
 
 // Get API base URL from environment, default to production URL
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://82.112.231.165:3002/api';
+// In production, use https://ozme.in/api (or https://www.ozme.in/api if behind reverse proxy)
+// For development, use http://localhost:3002/api or the IP address
+const getApiBaseUrl = () => {
+  // Priority 1: Environment variable
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  
+  // Priority 2: Auto-detect based on hostname
+  const hostname = window.location.hostname;
+  if (hostname === 'ozme.in' || hostname === 'www.ozme.in') {
+    // Use same protocol as current page (https in production)
+    const protocol = window.location.protocol;
+    return `${protocol}//${hostname}/api`;
+  }
+  
+  // Priority 3: Development fallback
+  return 'http://82.112.231.165:3002/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Log API base URL on load (for debugging)
-if (import.meta.env.DEV) {
-  console.log('API Base URL:', API_BASE_URL);
-}
+console.log('🌐 API Base URL:', API_BASE_URL);
+console.log('🌐 Current hostname:', window.location.hostname);
+console.log('🌐 Current protocol:', window.location.protocol);
 
 /**
  * Get auth token from localStorage
@@ -78,10 +98,20 @@ export const apiRequest = async (endpoint, options = {}) => {
         throw authError;
       }
       
-      // For 404s, return null to allow graceful handling
+      // For 404s, throw error with clear message
       if (response.status === 404) {
-        console.warn(`Endpoint not found: ${url}`);
-        return null;
+        console.error(`❌ Endpoint not found: ${url}`);
+        console.error(`   API Base URL: ${API_BASE_URL}`);
+        console.error(`   Full URL: ${url}`);
+        console.error(`   This usually means:`);
+        console.error(`   1. Backend route doesn't exist or server not restarted`);
+        console.error(`   2. API base URL is incorrect (current: ${API_BASE_URL})`);
+        console.error(`   3. Nginx/reverse proxy not configured correctly`);
+        console.error(`   4. Backend server is not running on port 3002`);
+        const notFoundError = new Error(`Backend API endpoint not found. The payment service may not be deployed or the server needs to be restarted.`);
+        notFoundError.response = { status: 404, data };
+        notFoundError.errorCode = 'ENDPOINT_NOT_FOUND';
+        throw notFoundError;
       }
       
       // For other errors, throw with error data

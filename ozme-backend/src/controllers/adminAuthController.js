@@ -44,15 +44,24 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // Generate token
-    const token = generateToken(user._id, process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET);
+    // Generate token with 1 hour expiry for admin
+    const adminTokenExpiry = process.env.ADMIN_JWT_EXPIRE || '1h';
+    const token = generateToken(
+      user._id, 
+      process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
+      adminTokenExpiry
+    );
 
-    // Set httpOnly cookie
+    // Set httpOnly cookie with 1 hour expiry
+    const cookieMaxAge = adminTokenExpiry === '1h' 
+      ? 60 * 60 * 1000 // 1 hour in milliseconds
+      : 30 * 24 * 60 * 60 * 1000; // Fallback to 30 days if custom expiry
+    
     res.cookie('adminToken', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      maxAge: cookieMaxAge,
     });
 
     res.json({

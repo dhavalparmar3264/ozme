@@ -2,7 +2,9 @@ import Order from '../models/Order.js';
 import CartItem from '../models/CartItem.js';
 import Product from '../models/Product.js';
 import Coupon from '../models/Coupon.js';
-import { sendOrderConfirmationEmail } from '../utils/orderEmails.js';
+import User from '../models/User.js';
+import { sendOrderConfirmationEmail, sendAdminOrderNotification } from '../utils/orderEmails.js';
+import { subscribeNewsletter } from './newsletterController.js';
 
 /**
  * Helper function to reduce product stock for order items
@@ -69,7 +71,7 @@ const reduceOrderStock = async (orderItems) => {
  */
 export const createOrder = async (req, res) => {
   try {
-    const { shippingAddress, paymentMethod, promoCode, discountAmount = 0, items: requestItems, totalAmount: requestTotalAmount } = req.body;
+    const { shippingAddress, paymentMethod, promoCode, discountAmount = 0, items: requestItems, totalAmount: requestTotalAmount, newsletter } = req.body;
 
     if (!req.user) {
       return res.status(401).json({
@@ -168,10 +170,10 @@ export const createOrder = async (req, res) => {
     const formattedShippingAddress = {
       name: shippingAddress.name || `${shippingAddress.firstName || ''} ${shippingAddress.lastName || ''}`.trim() || 'Customer',
       phone: shippingAddress.phone || '',
-      address: shippingAddress.address || '',
+      address: shippingAddress.address || shippingAddress.street || '',
       city: shippingAddress.city || '',
       state: shippingAddress.state || '',
-      pincode: shippingAddress.pincode || '',
+      pincode: shippingAddress.pincode || shippingAddress.pinCode || '',
       country: shippingAddress.country || 'India',
     };
 
@@ -237,6 +239,10 @@ export const createOrder = async (req, res) => {
       }
     }
 
+    // Calculate subtotal and shipping cost
+    const subtotal = totalAmount + discountAmount; // Subtotal before discount
+    const shippingCost = 0; // Free shipping for now
+
     // Create order
     const order = await Order.create({
       user: req.user.id,
@@ -244,29 +250,152 @@ export const createOrder = async (req, res) => {
       shippingAddress: formattedShippingAddress,
       paymentMethod: paymentMethod === 'ONLINE' ? 'Prepaid' : (paymentMethod || 'COD'),
       orderStatus: paymentMethod === 'ONLINE' ? 'Pending' : (paymentMethod === 'COD' ? 'Processing' : 'Pending'),
+      deliveryStatus: paymentMethod === 'ONLINE' ? 'Pending' : (paymentMethod === 'COD' ? 'Processing' : 'Pending'),
       totalAmount,
+      subtotal,
+      shippingCost,
       discountAmount,
       promoCode: promoCode || null,
     });
 
-    // Clear cart if using backend cart
-    if (!requestItems || requestItems.length === 0) {
+    // Clear cart after successful order creation (for both backend cart and requestItems)
+    try {
+      // Clear backend cart items
       await CartItem.deleteMany({ user: req.user.id });
+      console.log(`✅ Cart cleared for user ${req.user.id} after order creation`);
+    } catch (cartError) {
+      console.error('⚠️  Error clearing cart:', cartError.message);
+      // Don't fail order creation if cart clearing fails
     }
 
     await order.populate('items.product user');
 
-    // Send confirmation email ONLY for COD orders
-    // For Prepaid/Online orders, email will be sent after payment verification
-    if (paymentMethod === 'COD' || (!paymentMethod || paymentMethod.toUpperCase() === 'COD')) {
+    console.log(`📦 Order created successfully: ${order.orderNumber} (${order._id})`);
+    console.log(`   Customer: ${order.user?.email || order.shippingAddress?.email || 'N/A'}`);
+    console.log(`   Payment Method: ${order.paymentMethod}`);
+    console.log(`   Total Amount: ₹${order.totalAmount}`);
+
+    // Save delivery address to user's addresses (non-blocking)
+    try {
+      if (req.user && shippingAddress) {
+        const user = await User.findById(req.user.id);
+        if (user) {
+          // Prepare address data
+          const addressData = {
+            firstName: shippingAddress.firstName || shippingAddress.name?.split(' ')[0] || '',
+            lastName: shippingAddress.lastName || shippingAddress.name?.split(' ').slice(1).join(' ') || '',
+            email: shippingAddress.email || order.user?.email || user.email || '',
+            phone: shippingAddress.phone || '',
+            street: shippingAddress.street || shippingAddress.address || '',
+            apartment: shippingAddress.apartment || '',
+            city: shippingAddress.city || '',
+            state: shippingAddress.state || '',
+            pinCode: shippingAddress.pinCode || shippingAddress.pincode || '',
+            country: shippingAddress.country || 'India',
+            isDefault: false, // Will be set to true after saving
+            createdAt: new Date(),
+          };
+
+          // Check if address already exists (compare key fields)
+          const existingAddress = user.addresses.find(addr => 
+            addr.street?.toLowerCase().trim() === addressData.street.toLowerCase().trim() &&
+            addr.city?.toLowerCase().trim() === addressData.city.toLowerCase().trim() &&
+            addr.state?.toLowerCase().trim() === addressData.state.toLowerCase().trim() &&
+            addr.pinCode?.trim() === addressData.pinCode.trim()
+          );
+
+          if (!existingAddress) {
+            // Set all other addresses to not default
+            user.addresses.forEach(addr => {
+              addr.isDefault = false;
+            });
+            
+            // Set new address as default
+            addressData.isDefault = true;
+            
+            // Add new address
+            user.addresses.push(addressData);
+            await user.save();
+            
+            console.log(`✅ Address saved to user profile for order ${order.orderNumber}`);
+          } else {
+            // Address exists, just set it as default
+            user.addresses.forEach(addr => {
+              addr.isDefault = addr._id.toString() === existingAddress._id.toString();
+            });
+            await user.save();
+            
+            console.log(`ℹ️  Address already exists, set as default for order ${order.orderNumber}`);
+          }
+        }
+      }
+    } catch (addressError) {
+      console.error(`⚠️  Failed to save address for order ${order.orderNumber}:`, addressError.message);
+      // Don't fail the order if address save fails
+    }
+
+    // Handle newsletter subscription if checkbox was checked (non-blocking)
+    if (newsletter && shippingAddress?.email) {
       try {
-        await sendOrderConfirmationEmail(order, order.user);
-      } catch (emailError) {
-        console.error('Failed to send order confirmation email:', emailError);
-        // Don't fail the order if email fails
+        // Import NewsletterSubscriber model
+        const NewsletterSubscriber = (await import('../models/NewsletterSubscriber.js')).default;
+        const normalizedEmail = shippingAddress.email.trim().toLowerCase();
+        
+        // Check if already subscribed
+        let subscriber = await NewsletterSubscriber.findOne({ email: normalizedEmail });
+        if (!subscriber) {
+          subscriber = await NewsletterSubscriber.create({ email: normalizedEmail });
+          console.log(`📧 Newsletter subscription created for ${normalizedEmail}`);
+        } else {
+          console.log(`ℹ️  Email ${normalizedEmail} already subscribed to newsletter`);
+        }
+      } catch (newsletterError) {
+        console.error(`⚠️  Newsletter subscription error:`, newsletterError.message);
+        // Don't fail the order if newsletter subscription fails
       }
     }
-    // Note: Prepaid orders will have email sent in paymentController after payment verification
+
+    // Send admin notification email for ALL orders (non-blocking)
+    try {
+      console.log(`📤 Sending admin order notification for order ${order.orderNumber}...`);
+      const adminEmailResult = await sendAdminOrderNotification(order);
+      if (adminEmailResult.success) {
+        console.log(`✅ Admin notification email sent successfully for order ${order.orderNumber}`);
+      } else {
+        console.error(`❌ Admin notification email failed for order ${order.orderNumber}:`, adminEmailResult.error || adminEmailResult.message);
+      }
+    } catch (emailError) {
+      console.error(`❌ Exception sending admin order notification for order ${order.orderNumber}:`, {
+        message: emailError.message,
+        stack: emailError.stack,
+        error: emailError
+      });
+      // Don't fail the order if email fails
+    }
+
+    // Send customer confirmation email for COD orders immediately
+    // For Prepaid/Online orders, emails will be sent after payment verification in paymentController
+    if (paymentMethod === 'COD' || (!paymentMethod || paymentMethod.toUpperCase() === 'COD')) {
+      try {
+        console.log(`📤 Sending customer confirmation email for order ${order.orderNumber}...`);
+        const customerEmailResult = await sendOrderConfirmationEmail(order, order.user);
+        if (customerEmailResult.success) {
+          console.log(`✅ Customer confirmation email sent successfully for order ${order.orderNumber}`);
+        } else {
+          console.error(`❌ Customer confirmation email failed for order ${order.orderNumber}:`, customerEmailResult.error || customerEmailResult.message);
+        }
+      } catch (emailError) {
+        console.error(`❌ Exception sending customer confirmation email for order ${order.orderNumber}:`, {
+          message: emailError.message,
+          stack: emailError.stack,
+          error: emailError
+        });
+        // Don't fail the order if email fails
+      }
+    } else {
+      console.log(`ℹ️  Customer confirmation email will be sent after payment verification for order ${order.orderNumber}`);
+    }
+    // Note: Prepaid orders will have customer emails sent in paymentController after payment verification
 
     res.status(201).json({
       success: true,

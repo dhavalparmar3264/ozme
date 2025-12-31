@@ -5,6 +5,7 @@ import {
   addAddress,
   updateAddress,
   deleteAddress,
+  setDefaultAddress,
 } from '../controllers/userController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { body } from 'express-validator';
@@ -23,13 +24,14 @@ const updateProfileValidation = [
 
 // Address validation
 const addressValidation = [
-  body('type').isIn(['Home', 'Office', 'Other']).withMessage('Invalid address type'),
-  body('name').trim().notEmpty().withMessage('Name is required'),
+  body('firstName').trim().notEmpty().withMessage('First name is required'),
+  body('lastName').trim().notEmpty().withMessage('Last name is required'),
+  body('email').isEmail().withMessage('Valid email is required'),
   body('phone').trim().notEmpty().withMessage('Phone is required'),
-  body('address').trim().notEmpty().withMessage('Address is required'),
+  body('street').trim().notEmpty().withMessage('Street address is required'),
   body('city').trim().notEmpty().withMessage('City is required'),
   body('state').trim().notEmpty().withMessage('State is required'),
-  body('pincode').trim().notEmpty().withMessage('Pincode is required'),
+  body('pinCode').trim().notEmpty().withMessage('PIN code is required'),
 ];
 
 // Routes
@@ -37,6 +39,7 @@ router.put('/me', updateProfileValidation, validateRequest, updateProfile);
 router.get('/me/addresses', getAddresses);
 router.post('/me/addresses', addressValidation, validateRequest, addAddress);
 router.put('/me/addresses/:addressId', addressValidation, validateRequest, updateAddress);
+router.patch('/me/addresses/:addressId/default', setDefaultAddress);
 router.delete('/me/addresses/:addressId', deleteAddress);
 
 export default router;

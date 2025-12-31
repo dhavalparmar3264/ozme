@@ -21,7 +21,6 @@ import {
     Check,
     Trash2,
     Edit3,
-    ChevronDown,
     AlertCircle
 } from 'lucide-react';
 import { useCart } from '../context/CartContext';
@@ -30,6 +29,7 @@ import { apiRequest } from '../utils/api';
 import { generateOrderId } from '../utils/generateOrderId';
 import { getStates, getCitiesByState } from '../utils/indianLocations';
 import toast from 'react-hot-toast';
+import StateCitySelect from '../componets/StateCitySelect';
 
 export default function CheckoutPage() {
     const navigate = useNavigate();
@@ -98,22 +98,22 @@ export default function CheckoutPage() {
         }
     };
     const [newAddress, setNewAddress] = useState({
-        type: 'Home',
-        name: '',
+        firstName: '',
+        lastName: '',
+        email: '',
         phone: '',
-        address: '',
+        street: '',
+        apartment: '',
         city: '',
         state: '',
-        pincode: '',
+        pinCode: '',
         country: 'India',
         isDefault: false,
     });
     const [isSavingAddress, setIsSavingAddress] = useState(false);
     const [editingAddressId, setEditingAddressId] = useState(null);
     const [isDeletingAddress, setIsDeletingAddress] = useState(null);
-    const [availableCities, setAvailableCities] = useState([]);
-    const [formCities, setFormCities] = useState([]);
-    const [availableStates] = useState(getStates());
+    // Note: StateCitySelect component handles cities internally
     const [showPhoneVerificationModal, setShowPhoneVerificationModal] = useState(false);
 
     // Use cart from context
@@ -138,6 +138,8 @@ export default function CheckoutPage() {
             localStorage.removeItem('appliedPromoCode');
         }
     }, []);
+
+    // PhonePe doesn't require SDK preloading - it uses direct redirect
 
     // Check phone verification status
     useEffect(() => {
@@ -193,39 +195,24 @@ export default function CheckoutPage() {
     // Handle address selection
     const handleSelectAddress = (address) => {
         setSelectedAddressId(address._id || address.id);
-        // Split name into first and last name
-        const nameParts = (address.name || '').split(' ');
         setFormData(prev => ({
             ...prev,
-            firstName: nameParts[0] || prev.firstName,
-            lastName: nameParts.slice(1).join(' ') || prev.lastName,
+            firstName: address.firstName || prev.firstName,
+            lastName: address.lastName || prev.lastName,
+            email: address.email || prev.email,
             phone: address.phone || prev.phone,
-            address: address.address || '',
-            apartment: '', // Address model doesn't have apartment field
+            address: address.street || address.address || '',
+            apartment: address.apartment || '',
             city: address.city || '',
             state: address.state || '',
-            pincode: address.pincode || '',
+            pincode: address.pinCode || address.pincode || '',
         }));
-        // Set available cities for the selected address state
-        if (address.state) {
-            const cities = getCitiesByState(address.state);
-            setFormCities(cities);
-        }
         setShowAddAddressForm(false);
     };
 
-    // Handle state change for new address form - update available cities
-    const handleStateChange = (stateName) => {
-        setNewAddress({ ...newAddress, state: stateName, city: '' });
-        const cities = getCitiesByState(stateName);
-        setAvailableCities(cities);
-    };
-
-    // Handle state change for main form - update available cities
+    // Handle state change for main form - StateCitySelect handles cities internally
     const handleFormStateChange = (stateName) => {
         setFormData(prev => ({ ...prev, state: stateName, city: '' }));
-        const cities = getCitiesByState(stateName);
-        setFormCities(cities);
     };
 
     // Handle add new address
@@ -233,12 +220,62 @@ export default function CheckoutPage() {
         setIsSavingAddress(true);
 
         try {
-            // Combine firstName and lastName into name for backend
+            // Use formData for address fields, fallback to newAddress
             const addressToSave = {
-                ...newAddress,
-                name: `${formData.firstName} ${formData.lastName}`.trim() || newAddress.name,
-                phone: formData.phone || newAddress.phone,
+                firstName: (formData.firstName || newAddress.firstName || '').trim(),
+                lastName: (formData.lastName || newAddress.lastName || '').trim(),
+                email: (formData.email || newAddress.email || '').trim().toLowerCase(),
+                phone: (formData.phone || newAddress.phone || '').trim(),
+                street: (formData.address || newAddress.street || '').trim(),
+                apartment: (formData.apartment || newAddress.apartment || '').trim(),
+                city: (formData.city || newAddress.city || '').trim(),
+                state: (formData.state || newAddress.state || '').trim(),
+                pinCode: (formData.pincode || newAddress.pinCode || '').trim(),
+                country: newAddress.country || 'India',
+                isDefault: newAddress.isDefault || false,
             };
+
+            // Validate required fields
+            if (!addressToSave.firstName) {
+                toast.error('Please enter first name');
+                setIsSavingAddress(false);
+                return;
+            }
+            if (!addressToSave.lastName) {
+                toast.error('Please enter last name');
+                setIsSavingAddress(false);
+                return;
+            }
+            if (!addressToSave.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addressToSave.email)) {
+                toast.error('Please enter a valid email address');
+                setIsSavingAddress(false);
+                return;
+            }
+            if (!addressToSave.phone) {
+                toast.error('Please enter phone number');
+                setIsSavingAddress(false);
+                return;
+            }
+            if (!addressToSave.street) {
+                toast.error('Please enter street address');
+                setIsSavingAddress(false);
+                return;
+            }
+            if (!addressToSave.state) {
+                toast.error('Please select a state');
+                setIsSavingAddress(false);
+                return;
+            }
+            if (!addressToSave.city) {
+                toast.error('Please select a city');
+                setIsSavingAddress(false);
+                return;
+            }
+            if (!addressToSave.pinCode || !/^[0-9]{6}$/.test(addressToSave.pinCode)) {
+                toast.error('Please enter a valid 6-digit PIN code');
+                setIsSavingAddress(false);
+                return;
+            }
 
             const isEditing = editingAddressId !== null;
             const url = isEditing 
@@ -270,23 +307,42 @@ export default function CheckoutPage() {
                 setShowAddAddressForm(false);
                 setEditingAddressId(null);
                 setNewAddress({
-                    type: 'Home',
-                    name: '',
+                    firstName: '',
+                    lastName: '',
+                    email: '',
                     phone: '',
-                    address: '',
+                    street: '',
+                    apartment: '',
                     city: '',
                     state: '',
-                    pincode: '',
+                    pinCode: '',
                     country: 'India',
                     isDefault: false,
                 });
-                setAvailableCities([]);
             } else {
+                // Handle validation errors
+                if (response?.errors && Array.isArray(response.errors)) {
+                    const errorMessages = response.errors.map(err => err.msg || err.message).join(', ');
+                    throw new Error(errorMessages || response?.message || 'Validation failed');
+                }
                 throw new Error(response?.message || 'Failed to save address');
             }
         } catch (error) {
             console.error('Error saving address:', error);
-            toast.error(error.message || 'Failed to save address. Please try again.');
+            console.error('Address data sent:', addressToSave);
+            
+            // Handle validation errors from API response
+            let errorMessage = error.message || 'Failed to save address. Please try again.';
+            if (error.response?.data) {
+                const errorData = error.response.data;
+                if (errorData.errors && Array.isArray(errorData.errors)) {
+                    errorMessage = errorData.errors.map(err => err.msg || err.message || err.param).join(', ');
+                } else if (errorData.message) {
+                    errorMessage = errorData.message;
+                }
+            }
+            
+            toast.error(errorMessage);
         } finally {
             setIsSavingAddress(false);
         }
@@ -297,30 +353,32 @@ export default function CheckoutPage() {
         e.stopPropagation(); // Prevent selecting the address
         setEditingAddressId(address._id || address.id);
         
-        // Parse name into firstName and lastName
-        const nameParts = (address.name || '').split(' ');
         setFormData(prev => ({
             ...prev,
-            firstName: nameParts[0] || '',
-            lastName: nameParts.slice(1).join(' ') || '',
+            firstName: address.firstName || '',
+            lastName: address.lastName || '',
+            email: address.email || prev.email,
             phone: address.phone || '',
+            address: address.street || address.address || '',
+            apartment: address.apartment || '',
+            city: address.city || '',
+            state: address.state || '',
+            pincode: address.pinCode || address.pincode || '',
         }));
         
         setNewAddress({
-            type: address.type || 'Home',
-            name: address.name || '',
+            firstName: address.firstName || '',
+            lastName: address.lastName || '',
+            email: address.email || '',
             phone: address.phone || '',
-            address: address.address || '',
+            street: address.street || address.address || '',
+            apartment: address.apartment || '',
             city: address.city || '',
             state: address.state || '',
-            pincode: address.pincode || '',
+            pinCode: address.pinCode || address.pincode || '',
             country: address.country || 'India',
             isDefault: address.isDefault || false,
         });
-        
-        // Set available cities for the state
-        const cities = getCitiesByState(address.state);
-        setAvailableCities(cities);
         
         setShowAddAddressForm(true);
     };
@@ -401,13 +459,6 @@ export default function CheckoutPage() {
             return;
         }
 
-        // Check if user is authenticated (required for backend validation)
-        if (!isAuthenticated) {
-            toast.error('Please login to apply promo codes');
-            navigate('/login', { state: { from: '/checkout' } });
-            return;
-        }
-
         setIsValidatingPromo(true);
 
         try {
@@ -471,6 +522,14 @@ export default function CheckoutPage() {
         }
         if (!/^[0-9]{10}$/.test(formData.phone.replace(/\D/g, ''))) {
             toast.error('Please enter a valid 10-digit phone number');
+            return false;
+        }
+        if (!formData.state) {
+            toast.error('Please select a state');
+            return false;
+        }
+        if (!formData.city) {
+            toast.error('Please select a city');
             return false;
         }
         if (!/^[0-9]{6}$/.test(formData.pincode)) {
@@ -558,10 +617,13 @@ export default function CheckoutPage() {
                 name: `${formData.firstName} ${formData.lastName}`.trim(),
                 email: formData.email,
                 phone: formData.phone,
+                street: formData.address,
+                apartment: formData.apartment || '',
                 address: `${formData.address}${formData.apartment ? ', ' + formData.apartment : ''}`,
                 city: formData.city,
                 state: formData.state,
-                pincode: formData.pincode,
+                pinCode: formData.pincode,
+                pincode: formData.pincode, // Keep for backward compatibility
                 country: 'India',
             };
 
@@ -575,6 +637,7 @@ export default function CheckoutPage() {
                     promoCode: appliedPromoCode,
                     discountAmount: discountAmount,
                     totalAmount: total,
+                    newsletter: formData.newsletter || false,
                 }),
             });
 
@@ -584,126 +647,132 @@ export default function CheckoutPage() {
 
             const backendOrder = orderResponse.data.order;
             const orderId = backendOrder._id;
+            
+            // Save orderId to localStorage for CheckoutSuccess page fallback
+            if (orderId) {
+                localStorage.setItem('lastOrderId', orderId);
+            }
 
-            // Step 2: Create Razorpay payment order
-            const razorpayResponse = await apiRequest('/payments/razorpay/create-order', {
+            // Clear cart after successful order creation (before payment redirect)
+            try {
+                clearCart(); // Clear cart context
+                // Clear localStorage cart keys
+                localStorage.removeItem('cart');
+                localStorage.removeItem('cartItems');
+                localStorage.removeItem('guestCart');
+                console.log('✅ Cart cleared after order creation');
+            } catch (cartError) {
+                console.warn('⚠️ Error clearing cart:', cartError);
+                // Don't fail order if cart clearing fails
+            }
+
+            // Step 2: Create PhonePe payment
+            console.log('🔄 Creating PhonePe payment session...');
+            
+            const phonepeResponse = await apiRequest('/payments/phonepe/create', {
                 method: 'POST',
                 body: JSON.stringify({
                     orderId: orderId,
                     amount: total,
+                    customerDetails: {
+                        name: `${formData.firstName} ${formData.lastName}`,
+                        email: formData.email,
+                        phone: formData.phone,
+                        customerId: user?._id || `customer_${orderId}`,
+                    },
                 }),
             });
 
-            if (!razorpayResponse || !razorpayResponse.success) {
-                throw new Error(razorpayResponse?.message || 'Failed to create payment order');
+            if (!phonepeResponse) {
+                throw new Error('Unable to connect to payment service. Please check your internet connection and try again.');
             }
 
-            const { orderId: razorpayOrderId, amount: razorpayAmount, currency, keyId } = razorpayResponse.data;
-
-            // Step 3: Function to open Razorpay checkout
-            const openRazorpayCheckout = () => {
-                const options = {
-                    key: keyId,
-                    amount: razorpayAmount, // Amount is in paise (already converted by backend)
-                    currency: currency || 'INR',
-                    name: 'OZME Perfumes',
-                    description: `Order #${backendOrder.orderNumber}`,
-                    order_id: razorpayOrderId,
-                    handler: async function (response) {
-                        // Payment successful - verify payment signature
-                        try {
-                            setIsProcessing(true);
-                            
-                            const verifyResponse = await apiRequest('/payments/razorpay/verify', {
-                                method: 'POST',
-                                body: JSON.stringify({
-                                    razorpayOrderId: response.razorpay_order_id,
-                                    razorpayPaymentId: response.razorpay_payment_id,
-                                    razorpaySignature: response.razorpay_signature,
-                                    orderId: orderId,
-                                }),
-                            });
-
-                            if (verifyResponse && verifyResponse.success) {
-                                // Clear cart after successful payment
-                                clearCart();
-                                
-                                // Clear applied promo code from localStorage
-                                localStorage.removeItem('appliedPromoCode');
-                                
-                                // Show success message
-                                toast.success('Payment successful! Your order has been placed.');
-                                
-                                // Redirect to track order page
-                                navigate('/track-order', {
-                                    state: {
-                                        orderId: orderId,
-                                        timestamp: Date.now(),
-                                    },
-                                });
-                            } else {
-                                throw new Error(verifyResponse?.message || 'Payment verification failed');
-                            }
-                        } catch (error) {
-                            console.error('Payment verification error:', error);
-                            toast.error(error.message || 'Payment verification failed. Please contact support.');
-                        } finally {
-                            setIsProcessing(false);
-                        }
-                    },
-                    prefill: {
-                        name: `${formData.firstName} ${formData.lastName}`,
-                        email: formData.email,
-                        contact: formData.phone,
-                    },
-                    notes: {
-                        order_id: orderId,
-                        order_number: backendOrder.orderNumber,
-                    },
-                    theme: {
-                        color: '#000000',
-                    },
-                    modal: {
-                        ondismiss: function() {
-                            // User closed the payment modal
-                            setIsProcessing(false);
-                            toast.info('Payment cancelled');
-                        },
-                    },
-                };
-
-                const razorpay = new window.Razorpay(options);
-                razorpay.on('payment.failed', function (response) {
-                    console.error('Payment failed:', response.error);
-                    toast.error(`Payment failed: ${response.error.description || response.error.reason || 'Unknown error'}`);
-                    setIsProcessing(false);
+            if (!phonepeResponse.success) {
+                const errorMsg = phonepeResponse?.message || phonepeResponse?.error || 'Failed to create payment session';
+                console.error('❌ PhonePe payment session creation failed:', {
+                    response: phonepeResponse,
+                    orderId,
+                    amount: total,
                 });
-
-                razorpay.open();
-            };
-
-            // Step 4: Load Razorpay Checkout SDK and open payment window
-            // Check if script is already loaded
-            if (window.Razorpay) {
-                // SDK already loaded, proceed directly
-                openRazorpayCheckout();
-            } else {
-                // Load SDK
-                const script = document.createElement('script');
-                script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-                script.onload = () => {
-                    openRazorpayCheckout();
-                };
-                script.onerror = () => {
-                    setIsProcessing(false);
-                    toast.error('Failed to load Razorpay SDK. Please refresh the page and try again.');
-                };
-                document.body.appendChild(script);
+                throw new Error(errorMsg);
             }
+
+            const { redirectUrl, merchantTransactionId } = phonepeResponse.data;
+
+            if (!redirectUrl) {
+                console.error('❌ Redirect URL missing from response:', phonepeResponse.data);
+                throw new Error('Payment redirect URL not received from PhonePe');
+            }
+
+            // CRITICAL: Validate redirect URL is PROD (not UAT/simulator)
+            const redirectUrlLower = redirectUrl.toLowerCase();
+            const isUatUrl = redirectUrlLower.includes('mercury-uat') ||
+                            redirectUrlLower.includes('merchant-simulator') ||
+                            redirectUrlLower.includes('preprod') ||
+                            redirectUrlLower.includes('sandbox') ||
+                            redirectUrlLower.includes('testing') ||
+                            redirectUrlLower.includes('api-testing') ||
+                            redirectUrlLower.includes('/simulator') ||
+                            redirectUrlLower.includes('pgtest');
+
+            if (isUatUrl) {
+                console.error('❌ CRITICAL: PhonePe returned UAT/simulator URL!');
+                console.error('   URL:', redirectUrl);
+                console.error('   This indicates the payment gateway is in TEST mode.');
+                throw new Error('Payment gateway is in TEST mode. Please contact support. Payment cannot be processed.');
+            }
+
+            // Verify it's a PhonePe PROD URL
+            if (!redirectUrlLower.includes('phonepe.com') || !redirectUrlLower.includes('api.phonepe.com')) {
+                console.warn('⚠️  Warning: Redirect URL does not appear to be PhonePe PROD:', redirectUrl.substring(0, 100));
+            }
+
+            console.log('✅ PhonePe payment session created:', {
+                merchantTransactionId,
+                redirectUrl: redirectUrl.substring(0, 50) + '...',
+                orderId,
+                amount: total,
+                isProdUrl: !isUatUrl
+            });
+
+            // Step 3: Redirect to PhonePe payment page (PROD only)
+            console.log('🚀 Redirecting to PhonePe PROD payment page...');
+            window.location.href = redirectUrl;
 
         } catch (error) {
-            console.error('Online payment error:', error);
-            toast.error(error.message || 'Payment initialization failed. Please try again.');
+            console.error('❌ Online payment error:', error);
+            console.error('📋 Error details:', {
+                message: error.message,
+                errorCode: error.errorCode,
+                response: error.response,
+                status: error.response?.status,
+                data: error.response?.data,
+            });
+            
+            // Provide user-friendly error messages
+            let errorMessage = error.message || 'Payment initialization failed. Please try again.';
+            
+            if (error.errorCode === 'ENDPOINT_NOT_FOUND' || error.response?.status === 404) {
+                errorMessage = 'Payment service is currently unavailable. Please contact support or try again later.';
+                console.error('⚠️  Backend API endpoint not found. Server may need restart or Nginx configuration issue.');
+            } else if (error.response?.status === 401 || error.response?.status === 403) {
+                errorMessage = 'Authentication failed. Please login again and try.';
+            } else if (error.response?.status === 500) {
+                // 500 error from backend
+                const backendError = error.response?.data?.message || error.response?.data?.error || error.message;
+                if (backendError?.includes('not configured') || backendError?.includes('credentials')) {
+                    errorMessage = 'Payment gateway is not configured. Please contact support.';
+                } else if (backendError?.includes('authentication failed')) {
+                    errorMessage = 'Payment gateway authentication failed. Please contact support.';
+                } else {
+                    errorMessage = backendError || 'Payment service error. Please try again or contact support.';
+                }
+                console.error('⚠️  Backend returned 500 error:', backendError);
+            } else if (error.message?.includes('connect') || error.message?.includes('network')) {
+                errorMessage = 'Unable to connect to payment service. Please check your internet connection.';
+            }
+            
+            toast.error(errorMessage);
             setIsProcessing(false);
         }
     };
@@ -789,10 +858,13 @@ export default function CheckoutPage() {
                 name: `${formData.firstName} ${formData.lastName}`.trim(),
                 email: formData.email,
                 phone: formData.phone,
+                street: formData.address,
+                apartment: formData.apartment || '',
                 address: `${formData.address}${formData.apartment ? ', ' + formData.apartment : ''}`,
                 city: formData.city,
                 state: formData.state,
-                pincode: formData.pincode,
+                pinCode: formData.pincode,
+                pincode: formData.pincode, // Keep for backward compatibility
                 country: 'India',
             };
 
@@ -806,6 +878,7 @@ export default function CheckoutPage() {
                     promoCode: appliedPromoCode,
                     discountAmount: discountAmount,
                     totalAmount: total,
+                    newsletter: formData.newsletter || false,
                 }),
             });
 
@@ -851,6 +924,11 @@ export default function CheckoutPage() {
             
             // Store order data in localStorage as backup
             localStorage.setItem('currentOrder', JSON.stringify(frontendOrderData));
+            
+            // Save orderId for CheckoutSuccess page fallback
+            if (backendOrder._id) {
+                localStorage.setItem('lastOrderId', backendOrder._id);
+            }
             
             // Save order to order history
             saveOrderToHistory(frontendOrderData);
@@ -1110,7 +1188,7 @@ export default function CheckoutPage() {
             {/* Main Content */}
             <section className="py-12">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="grid lg:grid-cols-3 gap-8">
+                    <div className="grid lg:grid-cols-3 gap-8 items-start">
                         {/* Left Column - Form */}
                         <div className="lg:col-span-2">
                             <button 
@@ -1149,9 +1227,9 @@ export default function CheckoutPage() {
                                                         {savedAddresses.map((address) => (
                                                             <div
                                                                 key={address._id || address.id}
-                                                                className={`relative p-4 border-2 rounded-lg transition-all duration-300 ${
+                                                                className={`relative p-5 border-2 rounded-lg transition-all duration-300 ${
                                                                     selectedAddressId === (address._id || address.id)
-                                                                        ? 'border-amber-600 bg-amber-50'
+                                                                        ? 'border-gray-400 bg-gray-50'
                                                                         : 'border-gray-200 hover:border-gray-300 bg-white'
                                                                 }`}
                                                             >
@@ -1162,32 +1240,35 @@ export default function CheckoutPage() {
                                                                 >
                                                                     <div className="flex items-start justify-between pr-16">
                                                                         <div className="flex-1">
-                                                                            <div className="flex items-center gap-2 mb-2">
+                                                                            <div className="flex items-center gap-2 mb-3">
                                                                                 {address.type === 'Home' && <Home className="w-4 h-4 text-gray-500" />}
                                                                                 {address.type === 'Office' && <Building2 className="w-4 h-4 text-gray-500" />}
                                                                                 {address.type === 'Other' && <MapPin className="w-4 h-4 text-gray-500" />}
                                                                                 <span className="font-semibold text-gray-900">{address.type}</span>
                                                                                 {address.isDefault && (
-                                                                                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-semibold rounded">Default</span>
+                                                                                    <span className="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs font-semibold rounded">Default</span>
                                                                                 )}
                                                                             </div>
-                                                                            <p className="text-sm text-gray-700 mb-1">{address.name}</p>
-                                                                            <p className="text-sm text-gray-600">{address.address}</p>
-                                                                            <p className="text-sm text-gray-600">{address.city}, {address.state} {address.pincode}</p>
-                                                                            <p className="text-sm text-gray-600 mt-1">{address.phone}</p>
+                                                                            <p className="text-base font-bold text-gray-900 mb-2">{address.name}</p>
+                                                                            <p className="text-sm text-gray-700 mb-1">{address.street || address.address}</p>
+                                                                            {address.apartment && (
+                                                                                <p className="text-sm text-gray-700 mb-1">{address.apartment}</p>
+                                                                            )}
+                                                                            <p className="text-sm text-gray-700 mb-1">{address.city}, {address.state} {address.pincode || address.pinCode}</p>
+                                                                            <p className="text-xs text-gray-500 mt-2">{address.phone}</p>
                                                                         </div>
                                                                         {selectedAddressId === (address._id || address.id) && (
-                                                                            <Check className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                                                                            <Check className="w-5 h-5 text-gray-600 flex-shrink-0" />
                                                                         )}
                                                                     </div>
                                                                 </button>
                                                                 
                                                                 {/* Edit and Delete buttons */}
-                                                                <div className="absolute top-3 right-3 flex items-center gap-1">
+                                                                <div className="absolute top-4 right-4 flex items-center gap-1">
                                                                     <button
                                                                         type="button"
                                                                         onClick={(e) => handleEditAddress(address, e)}
-                                                                        className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors"
+                                                                        className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
                                                                         title="Edit address"
                                                                     >
                                                                         <Edit3 className="w-4 h-4" />
@@ -1248,7 +1329,6 @@ export default function CheckoutPage() {
                                                                         country: 'India',
                                                                         isDefault: false,
                                                                     });
-                                                                    setAvailableCities([]);
                                                                 }}
                                                                 className="text-gray-400 hover:text-gray-600"
                                                             >
@@ -1315,59 +1395,18 @@ export default function CheckoutPage() {
                                                                 />
                                                             </div>
                                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                                                <div>
-                                                                    <label className="block text-sm font-medium text-gray-700 mb-2">State *</label>
-                                                                    <div className="relative">
-                                                                        <select
-                                                                            value={newAddress.state}
-                                                                            onChange={(e) => handleStateChange(e.target.value)}
-                                                                            className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400 appearance-none bg-white"
-                                                                            required
-                                                                        >
-                                                                            <option value="">Select State</option>
-                                                                            {availableStates.map((state) => (
-                                                                                <option key={state} value={state}>
-                                                                                    {state}
-                                                                                </option>
-                                                                            ))}
-                                                                        </select>
-                                                                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                                                                    </div>
-                                                                </div>
-                                                                <div>
-                                                                    <label className="block text-sm font-medium text-gray-700 mb-2">City *</label>
-                                                                    <div className="relative">
-                                                                        <select
-                                                                            value={newAddress.city}
-                                                                            onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value })}
-                                                                            className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400 appearance-none bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
-                                                                            required
-                                                                            disabled={!newAddress.state}
-                                                                        >
-                                                                            <option value="">
-                                                                                {newAddress.state ? 'Select City' : 'Select state first'}
-                                                                            </option>
-                                                                            {availableCities.map((city) => (
-                                                                                <option key={city} value={city}>
-                                                                                    {city}
-                                                                                </option>
-                                                                            ))}
-                                                                            {newAddress.state && availableCities.length === 0 && (
-                                                                                <option value="" disabled>No cities found</option>
-                                                                            )}
-                                                                        </select>
-                                                                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                                                                    </div>
-                                                                    {/* Allow custom city input if not in list */}
-                                                                    {newAddress.state && (
-                                                                        <input
-                                                                            type="text"
-                                                                            placeholder="Or type city name"
-                                                                            value={availableCities.includes(newAddress.city) ? '' : newAddress.city}
-                                                                            onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value })}
-                                                                            className="w-full px-4 py-2 mt-2 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400 text-sm"
-                                                                        />
-                                                                    )}
+                                                                <div className="sm:col-span-2">
+                                                                    <StateCitySelect
+                                                                        state={newAddress.state}
+                                                                        city={newAddress.city}
+                                                                        onStateChange={(newState) => {
+                                                                            setNewAddress({ ...newAddress, state: newState, city: '' });
+                                                                        }}
+                                                                        onCityChange={(newCity) => setNewAddress({ ...newAddress, city: newCity })}
+                                                                        stateLabel="State *"
+                                                                        cityLabel="City *"
+                                                                        allowCustomCity={true}
+                                                                    />
                                                                 </div>
                                                                 <div>
                                                                     <label className="block text-sm font-medium text-gray-700 mb-2">PIN Code *</label>
@@ -1566,62 +1605,16 @@ export default function CheckoutPage() {
                                                     </div>
 
                                                     <div className="grid sm:grid-cols-3 gap-4">
-                                                        <div>
-                                                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                                State *
-                                                            </label>
-                                                            <div className="relative">
-                                                                <select
-                                                                    name="state"
-                                                                    value={formData.state}
-                                                                    onChange={(e) => handleFormStateChange(e.target.value)}
-                                                                    required
-                                                                    className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-gray-400 transition-colors duration-300 appearance-none bg-white"
-                                                                >
-                                                                    <option value="">Select State</option>
-                                                                    {availableStates.map((state) => (
-                                                                        <option key={state} value={state}>
-                                                                            {state}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-                                                            </div>
-                                                        </div>
-                                                        <div>
-                                                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                                City *
-                                                            </label>
-                                                            <div className="relative">
-                                                                <select
-                                                                    name="city"
-                                                                    value={formData.city}
-                                                                    onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
-                                                                    required
-                                                                    disabled={!formData.state}
-                                                                    className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-gray-400 transition-colors duration-300 appearance-none bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
-                                                                >
-                                                                    <option value="">
-                                                                        {formData.state ? 'Select City' : 'Select state first'}
-                                                                    </option>
-                                                                    {formCities.map((city) => (
-                                                                        <option key={city} value={city}>
-                                                                            {city}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-                                                            </div>
-                                                            {/* Allow custom city input if not in list */}
-                                                            {formData.state && (
-                                                                <input
-                                                                    type="text"
-                                                                    placeholder="Or type city name"
-                                                                    value={formCities.includes(formData.city) ? '' : (formData.city || '')}
-                                                                    onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
-                                                                    className="w-full px-4 py-2 mt-2 border border-gray-200 rounded-lg focus:outline-none focus:border-gray-400 text-sm"
-                                                                />
-                                                            )}
+                                                        <div className="sm:col-span-2">
+                                                            <StateCitySelect
+                                                                state={formData.state}
+                                                                city={formData.city}
+                                                                onStateChange={(newState) => handleFormStateChange(newState)}
+                                                                onCityChange={(newCity) => setFormData(prev => ({ ...prev, city: newCity }))}
+                                                                stateLabel="State *"
+                                                                cityLabel="City *"
+                                                                allowCustomCity={true}
+                                                            />
                                                         </div>
                                                         <div>
                                                             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1740,7 +1733,7 @@ export default function CheckoutPage() {
                                                             </span>
                                                         </div>
                                                         <p className="text-sm text-gray-600">
-                                                            Pay securely with Razorpay
+                                                            Pay securely with PhonePe
                                                         </p>
                                                     </button>
                                                 </div>
@@ -1763,8 +1756,8 @@ export default function CheckoutPage() {
                                                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
                                                         <Shield className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
                                                         <div>
-                                                            <p className="text-sm font-semibold text-amber-900 mb-1">Secure Payment via Razorpay</p>
-                                                            <p className="text-xs text-amber-700">You will be redirected to Razorpay's secure payment gateway to complete your transaction.</p>
+                                                            <p className="text-sm font-semibold text-amber-900 mb-1">Secure Payment via PhonePe</p>
+                                                            <p className="text-xs text-amber-700">You will be redirected to PhonePe's secure payment gateway to complete your transaction.</p>
                                                         </div>
                                                     </div>
                                                 </>
@@ -1835,7 +1828,7 @@ export default function CheckoutPage() {
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <p className="font-semibold text-gray-900">Online Payment via Razorpay</p>
+                                                        <p className="font-semibold text-gray-900">Online Payment via PhonePe</p>
                                                         <p className="text-sm text-gray-600">Secure payment gateway</p>
                                                     </>
                                                 )}
@@ -1901,7 +1894,7 @@ export default function CheckoutPage() {
 
                         {/* Right Column - Order Summary */}
                         <div className="lg:col-span-1">
-                            <div className="bg-gradient-to-br from-gray-50 to-white border border-gray-100 p-8 sticky top-32 shadow-lg">
+                            <div className="bg-gradient-to-br from-gray-50 to-white border border-gray-100 p-8 sticky top-24 shadow-lg self-start">
                                 {/* Title */}
                                 <div className="mb-8">
                                     <div className="flex items-center gap-2 mb-2">
@@ -1914,7 +1907,7 @@ export default function CheckoutPage() {
                                 {/* Cart Items */}
                                 <div className="space-y-4 mb-6">
                                     {cartItems.map((item) => (
-                                        <div key={item.id} className="flex gap-3">
+                                        <div key={item.id} className="flex gap-4 items-start">
                                             <div className="w-16 h-16 flex-shrink-0 overflow-hidden bg-gray-100 rounded">
                                                 <img
                                                     src={item.image}
@@ -1922,12 +1915,12 @@ export default function CheckoutPage() {
                                                     className="w-full h-full object-cover"
                                                 />
                                             </div>
-                                            <div className="flex-1">
-                                                <p className="text-sm font-semibold text-gray-900">{item.name}</p>
-                                                <p className="text-xs text-gray-500">Qty: {item.quantity}</p>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-medium text-gray-900 leading-snug line-clamp-2">{item.name}</p>
+                                                <p className="text-xs text-gray-500 mt-1">Qty: {item.quantity}</p>
                                             </div>
-                                            <div className="text-right">
-                                                <p className="text-sm font-semibold text-gray-900">
+                                            <div className="text-right flex-shrink-0">
+                                                <p className="text-sm font-semibold text-gray-900 whitespace-nowrap">
                                                     ₹{(item.price * item.quantity).toLocaleString('en-IN')}
                                                 </p>
                                             </div>
@@ -2008,15 +2001,12 @@ export default function CheckoutPage() {
 
                                     {/* Total */}
                                     <div className="border-t-2 border-gray-200 pt-4 mt-4">
-                                        <div className="flex justify-between items-baseline">
-                                            <span className="text-xl font-light text-gray-900">Total</span>
+                                        <div className="flex items-end justify-between">
+                                            <span className="text-sm font-medium text-gray-600">Total</span>
                                             <div className="text-right">
-                                                <div className="flex items-baseline gap-2">
-                                                    <span className="text-sm text-gray-500">₹</span>
-                                                    <span className="text-4xl font-light text-gray-900">
-                                                        {total.toLocaleString('en-IN')}
-                                                    </span>
-                                                </div>
+                                                <p className="text-3xl font-semibold text-gray-900">
+                                                    ₹{total.toLocaleString('en-IN')}
+                                                </p>
                                                 <p className="text-xs text-gray-500 mt-1">Inclusive of all taxes</p>
                                             </div>
                                         </div>

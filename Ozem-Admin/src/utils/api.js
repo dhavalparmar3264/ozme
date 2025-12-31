@@ -4,7 +4,7 @@
  */
 
 // Get API base URL from environment, default to production URL
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://82.112.231.165:3002/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://ozme.in/api';
 
 // Log API base URL on load (for debugging)
 if (import.meta.env.DEV) {
@@ -12,10 +12,11 @@ if (import.meta.env.DEV) {
 }
 
 /**
- * Get admin auth token from localStorage
+ * Get admin auth token from sessionStorage
+ * Note: Token is cleared on tab close/refresh for security
  */
 const getToken = () => {
-  return localStorage.getItem('adminToken');
+  return sessionStorage.getItem('adminToken');
 };
 
 /**
@@ -54,6 +55,12 @@ export const apiRequest = async (endpoint, options = {}) => {
     }
 
     const data = await response.json();
+
+    // Reset idle timer on successful API requests
+    // Dispatch custom event that idle timeout hook can listen to
+    if (response.ok) {
+      window.dispatchEvent(new CustomEvent('apiRequestSuccess'));
+    }
 
     if (!response.ok) {
       // For authentication errors (401, 403), throw with error data for proper handling

@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useWishlist } from '../context/WishlistContext';
 import { apiRequest } from '../utils/api.js';
 import toast from 'react-hot-toast';
+import StateCitySelect from '../componets/StateCitySelect';
 
 export default function LuxuryDashboard() {
   const { logout, user, checkAuth, loading: authLoading } = useAuth();
@@ -29,13 +30,15 @@ export default function LuxuryDashboard() {
   const [showAddressForm, setShowAddressForm] = useState(false);
   const [editingAddress, setEditingAddress] = useState(null);
   const [addressForm, setAddressForm] = useState({
-    type: 'Home',
-    name: '',
+    firstName: '',
+    lastName: '',
+    email: '',
     phone: '',
-    address: '',
+    street: '',
+    apartment: '',
     city: '',
     state: '',
-    pincode: '',
+    pinCode: '',
     country: 'India',
     isDefault: false,
   });
@@ -261,31 +264,38 @@ export default function LuxuryDashboard() {
   };
 
   const handleAddAddress = () => {
+    console.log('➕ Opening add address form');
     setEditingAddress(null);
+    const nameParts = (user?.name || '').split(' ');
     setAddressForm({
-      type: 'Home',
-      name: user?.name || '',
+      firstName: nameParts[0] || '',
+      lastName: nameParts.slice(1).join(' ') || '',
+      email: user?.email || '',
       phone: user?.phone || '',
-      address: '',
+      street: '',
+      apartment: '',
       city: '',
       state: '',
-      pincode: '',
+      pinCode: '',
       country: 'India',
       isDefault: addresses.length === 0,
     });
     setShowAddressForm(true);
+    console.log('✅ Address form opened');
   };
 
   const handleEditAddress = (address) => {
     setEditingAddress(address._id || address.id);
     setAddressForm({
-      type: address.type,
-      name: address.name,
-      phone: address.phone,
-      address: address.address,
-      city: address.city,
-      state: address.state,
-      pincode: address.pincode,
+      firstName: address.firstName || '',
+      lastName: address.lastName || '',
+      email: address.email || '',
+      phone: address.phone || '',
+      street: address.street || address.address || '',
+      apartment: address.apartment || '',
+      city: address.city || '',
+      state: address.state || '',
+      pinCode: address.pinCode || address.pincode || '',
       country: address.country || 'India',
       isDefault: address.isDefault || false,
     });
@@ -294,38 +304,183 @@ export default function LuxuryDashboard() {
 
   const handleSaveAddress = async (e) => {
     e.preventDefault();
+    e.stopPropagation();
+    
+    console.log('🔘 Form submit triggered');
+    console.log('📋 Current form state:', addressForm);
+    
+    // Validate all required fields
+    if (!addressForm.firstName || !addressForm.firstName.trim()) {
+      toast.error('Please enter first name');
+      return;
+    }
+    if (!addressForm.lastName || !addressForm.lastName.trim()) {
+      toast.error('Please enter last name');
+      return;
+    }
+    if (!addressForm.email || !addressForm.email.trim()) {
+      toast.error('Please enter email address');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addressForm.email.trim())) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+    if (!addressForm.phone || !addressForm.phone.trim()) {
+      toast.error('Please enter phone number');
+      return;
+    }
+    if (!addressForm.street || !addressForm.street.trim()) {
+      toast.error('Please enter street address');
+      return;
+    }
+    if (!addressForm.state || !addressForm.state.trim()) {
+      toast.error('Please select a state');
+      return;
+    }
+    if (!addressForm.city || !addressForm.city.trim()) {
+      toast.error('Please select a city');
+      return;
+    }
+    if (!addressForm.pinCode || !addressForm.pinCode.trim()) {
+      toast.error('Please enter PIN code');
+      return;
+    }
+    if (!/^[0-9]{6}$/.test(addressForm.pinCode.trim())) {
+      toast.error('Please enter a valid 6-digit PIN code');
+      return;
+    }
+    
     setIsSavingAddress(true);
 
+    // Prepare address data with trimmed values (outside try block so it's available in catch)
+    const addressData = {
+      firstName: addressForm.firstName.trim(),
+      lastName: addressForm.lastName.trim(),
+      email: addressForm.email.trim().toLowerCase(),
+      phone: addressForm.phone.trim(),
+      street: addressForm.street.trim(),
+      apartment: addressForm.apartment ? addressForm.apartment.trim() : '',
+      city: addressForm.city.trim(),
+      state: addressForm.state.trim(),
+      pinCode: addressForm.pinCode.trim(),
+      country: addressForm.country || 'India',
+      isDefault: addressForm.isDefault || false,
+    };
+
     try {
+      console.log('📤 Saving address...');
+      console.log('📝 Form data:', addressForm);
+      console.log('📨 Sending address data:', JSON.stringify(addressData, null, 2));
+      console.log('🔗 Endpoint:', editingAddress ? `PUT /users/me/addresses/${editingAddress}` : 'POST /users/me/addresses');
+      console.log('🔑 Auth token present:', !!localStorage.getItem('token'));
+      console.log('🔑 Auth token value:', localStorage.getItem('token') ? '***' + localStorage.getItem('token').slice(-10) : 'none');
+      
       let response;
       if (editingAddress) {
         // Update existing address
+        console.log('🔄 Updating address:', editingAddress);
         response = await apiRequest(`/users/me/addresses/${editingAddress}`, {
           method: 'PUT',
-          body: JSON.stringify(addressForm),
+          body: JSON.stringify(addressData),
         });
       } else {
         // Add new address
+        console.log('➕ Adding new address');
         response = await apiRequest('/users/me/addresses', {
           method: 'POST',
-          body: JSON.stringify(addressForm),
+          body: JSON.stringify(addressData),
         });
       }
-
-      if (response && response.success) {
+      
+      console.log('📥 API Response received:', response);
+      console.log('📥 Response type:', typeof response);
+      console.log('📥 Response is null?', response === null);
+      console.log('📥 Response is undefined?', response === undefined);
+      console.log('📥 Response success?', response?.success);
+      
+      // Handle null response (network error or backend offline)
+      if (response === null || response === undefined) {
+        throw new Error('No response from server. The backend may be offline or the endpoint may not exist.');
+      }
+      
+      if (response.success) {
         toast.success(editingAddress ? 'Address updated successfully!' : 'Address added successfully!');
+        
+        // Reset form
+        const nameParts = (user?.name || '').split(' ');
+        setAddressForm({
+          firstName: nameParts[0] || '',
+          lastName: nameParts.slice(1).join(' ') || '',
+          email: user?.email || '',
+          phone: user?.phone || '',
+          street: '',
+          apartment: '',
+          city: '',
+          state: '',
+          pinCode: '',
+          country: 'India',
+          isDefault: false,
+        });
+        
         setShowAddressForm(false);
         setEditingAddress(null);
+        
         // Reload addresses
         const addressesResponse = await apiRequest('/users/me/addresses');
         if (addressesResponse && addressesResponse.success) {
           setAddresses(addressesResponse.data.addresses || []);
+          console.log('Addresses reloaded:', addressesResponse.data.addresses);
+        } else {
+          console.warn('Failed to reload addresses:', addressesResponse);
         }
       } else {
+        // Handle non-success response
+        console.error('⚠️ Response indicates failure:', response);
+        if (response?.errors && Array.isArray(response.errors)) {
+          const errorMessages = response.errors.map(err => err.msg || err.message).join(', ');
+          throw new Error(errorMessages || response?.message || 'Validation failed');
+        }
         throw new Error(response?.message || 'Failed to save address');
       }
     } catch (error) {
-      toast.error(error.message || 'Failed to save address');
+      console.error('❌ Address save error:', error);
+      console.error('📦 Address form data sent:', addressData);
+      console.error('🔍 Full error object:', JSON.stringify(error, null, 2));
+      console.error('🔍 Error details:', {
+        message: error.message,
+        response: error.response,
+        responseData: error.response?.data,
+        stack: error.stack,
+        name: error.name,
+      });
+      
+      // Handle validation errors from API response
+      let errorMessage = error.message || 'Failed to save address';
+      
+      // Check if error has response data (from apiRequest throw)
+      if (error.response?.data) {
+        const errorData = error.response.data;
+        console.error('📋 Error response data:', errorData);
+        
+        // Handle express-validator format: { errors: [{ param, msg }] }
+        if (errorData.errors && Array.isArray(errorData.errors)) {
+          const validationErrors = errorData.errors.map(err => {
+            const field = err.param || err.field || '';
+            const msg = err.msg || err.message || 'Invalid value';
+            return field ? `${field}: ${msg}` : msg;
+          });
+          errorMessage = validationErrors.join(', ');
+          console.error('📋 Validation errors:', validationErrors);
+        } else if (errorData.message) {
+          errorMessage = errorData.message;
+        }
+      }
+      
+      // Show error toast
+      toast.error(errorMessage || 'Failed to save address. Please check the console for details.');
+      
+      // Don't close the form on error so user can fix and retry
     } finally {
       setIsSavingAddress(false);
     }
@@ -353,6 +508,27 @@ export default function LuxuryDashboard() {
       }
     } catch (error) {
       toast.error(error.message || 'Failed to delete address');
+    }
+  };
+
+  const handleSetDefaultAddress = async (addressId) => {
+    try {
+      const response = await apiRequest(`/users/me/addresses/${addressId}/default`, {
+        method: 'PATCH',
+      });
+
+      if (response && response.success) {
+        toast.success('Default address updated successfully!');
+        // Reload addresses
+        const addressesResponse = await apiRequest('/users/me/addresses');
+        if (addressesResponse && addressesResponse.success) {
+          setAddresses(addressesResponse.data.addresses || []);
+        }
+      } else {
+        throw new Error(response?.message || 'Failed to set default address');
+      }
+    } catch (error) {
+      toast.error(error.message || 'Failed to set default address');
     }
   };
 
@@ -931,8 +1107,10 @@ export default function LuxuryDashboard() {
                     </div>
                   </div>
                   <button
+                    type="button"
                     onClick={handleAddAddress}
-                    className="px-6 py-3 bg-gradient-to-r from-amber-400 to-amber-500 text-white font-semibold rounded-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2"
+                    className="px-6 py-3 bg-gradient-to-r from-amber-400 to-amber-500 text-white font-semibold rounded-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 cursor-pointer"
+                    style={{ cursor: 'pointer' }}
                   >
                     <Plus className="w-4 h-4" />
                     Add New Address
@@ -947,43 +1125,73 @@ export default function LuxuryDashboard() {
                         {editingAddress ? 'Edit Address' : 'Add New Address'}
                       </h3>
                       <button
+                        type="button"
                         onClick={() => {
                           setShowAddressForm(false);
                           setEditingAddress(null);
+                          // Reset form
+                          const nameParts = (user?.name || '').split(' ');
+                          setAddressForm({
+                            firstName: nameParts[0] || '',
+                            lastName: nameParts.slice(1).join(' ') || '',
+                            email: user?.email || '',
+                            phone: user?.phone || '',
+                            street: '',
+                            apartment: '',
+                            city: '',
+                            state: '',
+                            pinCode: '',
+                            country: 'India',
+                            isDefault: addresses.length === 0,
+                          });
                         }}
-                        className="text-gray-400 hover:text-gray-600"
+                        className="text-gray-400 hover:text-gray-600 cursor-pointer"
                       >
                         <X className="w-5 h-5" />
                       </button>
                     </div>
 
-                    <form onSubmit={handleSaveAddress} className="space-y-4">
+                    <form 
+                      onSubmit={(e) => {
+                        console.log('📝 Form onSubmit triggered');
+                        handleSaveAddress(e);
+                      }} 
+                      className="space-y-4" 
+                      noValidate
+                    >
                       <div className="grid md:grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Address Type</label>
-                          <select
-                            value={addressForm.type}
-                            onChange={(e) => setAddressForm({ ...addressForm, type: e.target.value })}
-                            className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
-                            required
-                          >
-                            <option value="Home">Home</option>
-                            <option value="Office">Office</option>
-                            <option value="Other">Other</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">First Name *</label>
                           <input
                             type="text"
-                            value={addressForm.name}
-                            onChange={(e) => setAddressForm({ ...addressForm, name: e.target.value })}
+                            value={addressForm.firstName}
+                            onChange={(e) => setAddressForm({ ...addressForm, firstName: e.target.value })}
                             className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
                             required
                           />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Last Name *</label>
+                          <input
+                            type="text"
+                            value={addressForm.lastName}
+                            onChange={(e) => setAddressForm({ ...addressForm, lastName: e.target.value })}
+                            className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Email Address *</label>
+                          <input
+                            type="email"
+                            value={addressForm.email}
+                            onChange={(e) => setAddressForm({ ...addressForm, email: e.target.value })}
+                            className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number *</label>
                           <input
                             type="tel"
                             value={addressForm.phone}
@@ -992,45 +1200,49 @@ export default function LuxuryDashboard() {
                             required
                           />
                         </div>
+                        <StateCitySelect
+                          state={addressForm.state}
+                          city={addressForm.city}
+                          onStateChange={(newState) => setAddressForm({ ...addressForm, state: newState, city: '' })}
+                          onCityChange={(newCity) => setAddressForm({ ...addressForm, city: newCity })}
+                          stateLabel="State *"
+                          cityLabel="City *"
+                        />
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">City</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">PIN Code *</label>
                           <input
                             type="text"
-                            value={addressForm.city}
-                            onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })}
+                            value={addressForm.pinCode}
+                            onChange={(e) => {
+                              const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+                              setAddressForm({ ...addressForm, pinCode: value });
+                            }}
                             className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
                             required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">State</label>
-                          <input
-                            type="text"
-                            value={addressForm.state}
-                            onChange={(e) => setAddressForm({ ...addressForm, state: e.target.value })}
-                            className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Pincode</label>
-                          <input
-                            type="text"
-                            value={addressForm.pincode}
-                            onChange={(e) => setAddressForm({ ...addressForm, pincode: e.target.value })}
-                            className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
-                            required
+                            maxLength="6"
+                            pattern="[0-9]{6}"
+                            placeholder="6-digit PIN"
                           />
                         </div>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Street Address</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Street Address *</label>
                         <textarea
-                          value={addressForm.address}
-                          onChange={(e) => setAddressForm({ ...addressForm, address: e.target.value })}
+                          value={addressForm.street}
+                          onChange={(e) => setAddressForm({ ...addressForm, street: e.target.value })}
                           className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
                           rows="3"
                           required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Apartment, Suite, etc. (Optional)</label>
+                        <input
+                          type="text"
+                          value={addressForm.apartment}
+                          onChange={(e) => setAddressForm({ ...addressForm, apartment: e.target.value })}
+                          className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-amber-400"
+                          placeholder="Apt 4B"
                         />
                       </div>
                       <div className="flex items-center gap-2">
@@ -1049,7 +1261,12 @@ export default function LuxuryDashboard() {
                         <button
                           type="submit"
                           disabled={isSavingAddress}
-                          className="flex-1 py-3 bg-gradient-to-r from-amber-400 to-amber-500 text-white font-semibold rounded-lg hover:shadow-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={(e) => {
+                            console.log('🔘 Button clicked!');
+                            // Form onSubmit will handle it, but log to verify click works
+                          }}
+                          className="flex-1 py-3 bg-gradient-to-r from-amber-400 to-amber-500 text-white font-semibold rounded-lg hover:shadow-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                          style={{ cursor: isSavingAddress ? 'not-allowed' : 'pointer' }}
                         >
                           {isSavingAddress ? 'Saving...' : (editingAddress ? 'Update Address' : 'Add Address')}
                         </button>
@@ -1058,8 +1275,23 @@ export default function LuxuryDashboard() {
                           onClick={() => {
                             setShowAddressForm(false);
                             setEditingAddress(null);
+                            // Reset form
+                            const nameParts = (user?.name || '').split(' ');
+                            setAddressForm({
+                              firstName: nameParts[0] || '',
+                              lastName: nameParts.slice(1).join(' ') || '',
+                              email: user?.email || '',
+                              phone: user?.phone || '',
+                              street: '',
+                              apartment: '',
+                              city: '',
+                              state: '',
+                              pinCode: '',
+                              country: 'India',
+                              isDefault: addresses.length === 0,
+                            });
                           }}
-                          className="px-6 py-3 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-all duration-300"
+                          className="px-6 py-3 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-all duration-300 cursor-pointer"
                         >
                           Cancel
                         </button>
@@ -1088,7 +1320,10 @@ export default function LuxuryDashboard() {
                 ) : (
                   addresses.map((address) => {
                     const addressId = address._id || address.id;
-                    const fullAddress = `${address.address}, ${address.city}, ${address.state} - ${address.pincode}`;
+                    const streetAddress = address.street || address.address || '';
+                    const apartment = address.apartment ? `, ${address.apartment}` : '';
+                    const fullAddress = `${streetAddress}${apartment}, ${address.city}, ${address.state} - ${address.pinCode || address.pincode}`;
+                    const fullName = `${address.firstName || ''} ${address.lastName || ''}`.trim() || address.name || 'N/A';
                     
                     return (
                       <div
@@ -1101,7 +1336,7 @@ export default function LuxuryDashboard() {
                           <div>
                             <div className="flex items-center gap-3 mb-2">
                               <h3 className="text-xl font-light text-gray-900">
-                                {address.type}
+                                {fullName}
                               </h3>
                               {address.isDefault && (
                                 <span className="px-3 py-1 bg-amber-100 text-amber-700 text-xs font-semibold rounded-full">
@@ -1111,6 +1346,14 @@ export default function LuxuryDashboard() {
                             </div>
                           </div>
                           <div className="flex gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                            {!address.isDefault && (
+                              <button
+                                onClick={() => handleSetDefaultAddress(addressId)}
+                                className="px-4 py-2 border border-amber-300 text-amber-600 rounded-lg hover:bg-amber-50 transition-all duration-300 text-sm font-medium"
+                              >
+                                Set Default
+                              </button>
+                            )}
                             <button
                               onClick={() => handleEditAddress(address)}
                               className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all duration-300 text-sm font-medium"
@@ -1126,7 +1369,7 @@ export default function LuxuryDashboard() {
                           </div>
                         </div>
                         <p className="text-gray-600 leading-relaxed mb-2">
-                          {address.name} • {address.phone}
+                          {address.email || 'N/A'} • {address.phone}
                         </p>
                         <p className="text-gray-600 leading-relaxed">
                           {fullAddress}

@@ -23,6 +23,7 @@ const OrderDetails = ({ onBack }) => {
   const [error, setError] = useState(null);
   const [note, setNote] = useState('');
   const [trackingNumber, setTrackingNumber] = useState('');
+  const [courierName, setCourierName] = useState('Blue Dart');
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
   // Fetch order from backend
@@ -51,6 +52,7 @@ const OrderDetails = ({ onBack }) => {
           amount: backendOrder.totalAmount || 0,
           paymentMethod: backendOrder.paymentMethod === 'Prepaid' ? 'Online' : 'COD',
           status: backendOrder.orderStatus || 'Pending',
+          deliveryStatus: backendOrder.deliveryStatus || backendOrder.orderStatus || 'Pending',
           paymentStatus: backendOrder.paymentStatus || 'Pending',
           date: backendOrder.createdAt || new Date().toISOString(),
           items: backendOrder.items?.map(item => ({
@@ -60,13 +62,14 @@ const OrderDetails = ({ onBack }) => {
             size: item.size || '100ml',
             image: item.product?.images?.[0] || ''
           })) || [],
-          subtotal: backendOrder.totalAmount + (backendOrder.discountAmount || 0),
-          shipping: 0,
+          subtotal: backendOrder.subtotal || (backendOrder.totalAmount + (backendOrder.discountAmount || 0)),
+          shipping: backendOrder.shippingCost || 0,
           discount: backendOrder.discountAmount || 0,
           shippingAddress: backendOrder.shippingAddress ? 
             `${backendOrder.shippingAddress.address || ''}, ${backendOrder.shippingAddress.apartment || ''}, ${backendOrder.shippingAddress.city || ''}, ${backendOrder.shippingAddress.state || ''} ${backendOrder.shippingAddress.pincode || ''}`.trim().replace(/,\s*,/g, ',').replace(/^,\s*|,\s*$/g, '') :
             '',
           trackingNumber: backendOrder.trackingNumber || '',
+          courierName: backendOrder.courierName || '',
           timeline: generateTimeline(backendOrder),
           promoCode: backendOrder.promoCode,
           backendOrder: backendOrder,
@@ -74,6 +77,7 @@ const OrderDetails = ({ onBack }) => {
         
         setOrder(transformedOrder);
         setTrackingNumber(backendOrder.trackingNumber || '');
+        setCourierName(backendOrder.courierName || 'Blue Dart');
       } else {
         setError('Failed to fetch order');
         notify.error(response?.message || 'Failed to load order');
@@ -87,18 +91,31 @@ const OrderDetails = ({ onBack }) => {
     }
   };
 
-  // Generate timeline from order status
+  // Generate timeline from deliveryStatus (preferred) or orderStatus
   const generateTimeline = (backendOrder) => {
     const timeline = [];
     const statusOrder = ['Pending', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered'];
-    const currentStatus = backendOrder.orderStatus || 'Pending';
+    const currentStatus = backendOrder.deliveryStatus || backendOrder.orderStatus || 'Pending';
     const currentIndex = statusOrder.indexOf(currentStatus);
     
     statusOrder.forEach((status, index) => {
       const isCompleted = index <= currentIndex && currentStatus !== 'Cancelled';
+      let statusDate = null;
+      
+      // Use specific timestamps if available
+      if (status === 'Shipped' && backendOrder.shippedAt) {
+        statusDate = backendOrder.shippedAt;
+      } else if (status === 'Out for Delivery' && backendOrder.outForDeliveryAt) {
+        statusDate = backendOrder.outForDeliveryAt;
+      } else if (status === 'Delivered' && backendOrder.deliveredAt) {
+        statusDate = backendOrder.deliveredAt;
+      } else if (isCompleted) {
+        statusDate = backendOrder.updatedAt || backendOrder.createdAt;
+      }
+      
       timeline.push({
         status: status,
-        date: isCompleted ? (backendOrder.updatedAt || backendOrder.createdAt) : null,
+        date: statusDate,
         completed: isCompleted,
       });
     });
@@ -114,18 +131,23 @@ const OrderDetails = ({ onBack }) => {
     return timeline;
   };
 
-  const handleUpdateStatus = async (newStatus, tracking = null) => {
+  const handleUpdateStatus = async (newStatus, tracking = null, courier = null) => {
     if (!order) return;
     
     try {
       setUpdatingStatus(true);
       
       const updateData = {
-        orderStatus: newStatus,
+        deliveryStatus: newStatus, // Use deliveryStatus as primary field
+        orderStatus: newStatus, // Keep orderStatus for backward compatibility
       };
       
       if (tracking !== null) {
         updateData.trackingNumber = tracking || trackingNumber || '';
+      }
+      
+      if (courier !== null) {
+        updateData.courierName = courier || courierName || 'Blue Dart';
       }
       
       const response = await apiRequest(`/admin/orders/${order._id}/status`, {
@@ -441,20 +463,39 @@ const OrderDetails = ({ onBack }) => {
               )}
               {order.status === 'Processing' && order.status !== 'Shipped' && order.status !== 'Delivered' && order.status !== 'Cancelled' && (
                 <>
-                  <div className="mb-3">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Tracking Number
-                    </label>
-                    <input
-                      type="text"
-                      value={trackingNumber}
-                      onChange={(e) => setTrackingNumber(e.target.value)}
-                      placeholder="Enter tracking number"
-                      className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-white"
-                    />
+                  <div className="mb-3 space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Courier Name
+                      </label>
+                      <select
+                        value={courierName}
+                        onChange={(e) => setCourierName(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-white"
+                      >
+                        <option value="Blue Dart">Blue Dart</option>
+                        <option value="DTDC">DTDC</option>
+                        <option value="FedEx">FedEx</option>
+                        <option value="Delhivery">Delhivery</option>
+                        <option value="India Post">India Post</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Tracking Number
+                      </label>
+                      <input
+                        type="text"
+                        value={trackingNumber}
+                        onChange={(e) => setTrackingNumber(e.target.value)}
+                        placeholder="Enter tracking number"
+                        className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-white"
+                      />
+                    </div>
                   </div>
                   <button
-                    onClick={() => handleUpdateStatus('Shipped', trackingNumber)}
+                    onClick={() => handleUpdateStatus('Shipped', trackingNumber, courierName)}
                     disabled={updatingStatus || !trackingNumber.trim()}
                     className="w-full py-3 px-4 bg-gradient-to-r from-amber-400 to-amber-600 text-white rounded-xl hover:shadow-lg hover:shadow-blue-500/25 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -462,7 +503,16 @@ const OrderDetails = ({ onBack }) => {
                   </button>
                 </>
               )}
-              {order.status === 'Shipped' && order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+              {order.status === 'Shipped' && order.status !== 'Out for Delivery' && order.status !== 'Delivered' && order.status !== 'Cancelled' && (
+                <button
+                  onClick={() => handleUpdateStatus('Out for Delivery')}
+                  disabled={updatingStatus}
+                  className="w-full py-3 px-4 bg-gradient-to-r from-blue-400 to-blue-600 text-white rounded-xl hover:shadow-lg hover:shadow-blue-500/25 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {updatingStatus ? 'Updating...' : 'Out for Delivery'}
+                </button>
+              )}
+              {(order.status === 'Shipped' || order.status === 'Out for Delivery') && order.status !== 'Delivered' && order.status !== 'Cancelled' && (
                 <button
                   onClick={() => handleUpdateStatus('Delivered')}
                   disabled={updatingStatus}
@@ -484,10 +534,20 @@ const OrderDetails = ({ onBack }) => {
                   {updatingStatus ? 'Cancelling...' : 'Cancel Order'}
                 </button>
               )}
-              {order.trackingNumber && (
-                <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Tracking Number</p>
-                  <p className="text-sm font-semibold text-gray-800 dark:text-white">{order.trackingNumber}</p>
+              {(order.trackingNumber || order.courierName) && (
+                <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl space-y-2">
+                  {order.courierName && (
+                    <div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Courier</p>
+                      <p className="text-sm font-semibold text-gray-800 dark:text-white">{order.courierName}</p>
+                    </div>
+                  )}
+                  {order.trackingNumber && (
+                    <div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Tracking Number</p>
+                      <p className="text-sm font-semibold text-gray-800 dark:text-white">{order.trackingNumber}</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

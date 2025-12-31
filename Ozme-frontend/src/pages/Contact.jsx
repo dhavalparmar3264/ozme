@@ -22,8 +22,8 @@ export const ContactPage = () => {
       icon: Phone,
       title: 'Call Us',
       subtitle: 'Mon-Sat, 9 AM - 7 PM',
-      value: '+91 87340 03264',
-      link: 'tel:+918734003264',
+      value: '+91 92 74 74 3264',
+      link: 'tel:+919274743264',
       gradient: 'from-blue-500 to-blue-600'
     },
     {
@@ -241,7 +241,7 @@ export const ContactPage = () => {
                     Chat with us on WhatsApp for instant support and product recommendations.
                   </p>
                   <a
-                    href="https://wa.me/918734003264"
+                    href="https://wa.me/919274743264"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="px-6 py-3 bg-white text-green-600 font-semibold hover:bg-gray-100 transition-all duration-300 flex items-center justify-center gap-2"

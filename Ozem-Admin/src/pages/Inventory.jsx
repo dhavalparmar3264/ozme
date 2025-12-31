@@ -130,8 +130,8 @@ const Inventory = () => {
       formDataToSend.append('productData', JSON.stringify(productData));
 
       // Use fetch directly since apiRequest doesn't handle FormData well
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://82.112.231.165:3002/api';
-      const token = localStorage.getItem('adminToken');
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://ozme.in/api';
+      const token = sessionStorage.getItem('adminToken');
       
       const response = await fetch(`${API_BASE_URL}/admin/products/${product._id}`, {
         method: 'PUT',

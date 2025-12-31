@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import IdleTimeoutHandler from './components/IdleTimeoutHandler';
 import Login from './pages/Login';
 import Sidebar from './components/layout/Sidebar';
 import Navbar from './components/layout/Navbar';
@@ -42,14 +44,65 @@ const AdminLayout = ({ children, darkMode, setDarkMode, toggleSidebar, sidebarOp
 };
 
 function App() {
-  const [darkMode, setDarkMode] = useState(false);
+  // Initialize dark mode from localStorage or default to light mode
+  const [darkMode, setDarkMode] = useState(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+      return true;
+    }
+    if (savedTheme === 'light') {
+      return false;
+    }
+    // Default to light mode if no saved preference
+    return false;
+  });
+  
   const [sidebarOpen, setSidebarOpen] = useState(false); // Hidden by default on mobile
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
 
+  // Apply dark class to HTML element and persist to localStorage
+  useEffect(() => {
+    const htmlElement = document.documentElement;
+    
+    if (darkMode) {
+      htmlElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      htmlElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [darkMode]);
+
   return (
     <AuthProvider>
+      <Toaster 
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: darkMode ? '#1f2937' : '#363636',
+            color: '#fff',
+            border: darkMode ? '1px solid rgba(255, 255, 255, 0.1)' : 'none',
+          },
+          success: {
+            duration: 3000,
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            duration: 4000,
+            iconTheme: {
+              primary: '#ef4444',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
       <Router basename="/admin">
+        <IdleTimeoutHandler />
         <Routes>
           {/* Public route */}
           <Route 
@@ -261,7 +314,7 @@ function App() {
             }
           />
 
-          {/* Redirect any unknown paths to dashboard */}
+          {/* Redirect any unknown paths to dashboard (which will redirect to login if not authenticated) */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>

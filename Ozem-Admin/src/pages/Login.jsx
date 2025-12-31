@@ -104,13 +104,22 @@ const Login = () => {
               >
                 {isLoading ? 'Signing in...' : 'Sign in'}
               </button>
+              
+              <div className="mt-4 text-center">
+                <a
+                  href="https://ozme.in/"
+                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-amber-600 dark:hover:text-amber-500 transition-colors duration-200 inline-flex items-center gap-1"
+                >
+                  ← Back to User Section
+                </a>
+              </div>
             </div>
           </form>
         </div>
 
         <div className="mt-6 text-center text-sm">
           <p className="text-gray-500 dark:text-gray-400">
-            © {new Date().getFullYear()} Your Company. All rights reserved.
+            © {new Date().getFullYear()} Ozme Perfumes. All rights reserved.
           </p>
         </div>
       </div>

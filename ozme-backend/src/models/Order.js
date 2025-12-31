@@ -65,16 +65,67 @@ const orderSchema = new mongoose.Schema(
     },
     paymentId: {
       type: String,
-      default: null, // Razorpay payment ID for online payments
+      default: null, // Payment gateway transaction ID
+    },
+    paymentGateway: {
+      type: String,
+      enum: ['RAZORPAY', 'CASHFREE', 'PHONEPE'],
+      default: null, // Payment gateway used
+    },
+    merchantTransactionId: {
+      type: String,
+      default: null, // PhonePe merchant transaction ID
+    },
+    paidAt: {
+      type: Date,
+      default: null, // Payment completion timestamp
     },
     orderStatus: {
       type: String,
       enum: ['Pending', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled'],
       default: 'Pending',
     },
+    // Delivery status tracking (synced with orderStatus)
+    deliveryStatus: {
+      type: String,
+      enum: ['Pending', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled'],
+      default: 'Pending',
+    },
+    // Shipping information
+    courierName: {
+      type: String,
+      default: null,
+    },
+    trackingNumber: {
+      type: String,
+      default: null,
+    },
+    // Delivery timestamps
+    shippedAt: {
+      type: Date,
+      default: null,
+    },
+    outForDeliveryAt: {
+      type: Date,
+      default: null,
+    },
+    deliveredAt: {
+      type: Date,
+      default: null,
+    },
     totalAmount: {
       type: Number,
       required: [true, 'Total amount is required'],
+      min: 0,
+    },
+    subtotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    shippingCost: {
+      type: Number,
+      default: 0,
       min: 0,
     },
     discountAmount: {
@@ -89,10 +140,6 @@ const orderSchema = new mongoose.Schema(
     isMarketplace: {
       type: Boolean,
       default: false,
-    },
-    trackingNumber: {
-      type: String,
-      default: null,
     },
   },
   {

@@ -14,7 +14,7 @@ const FAQsPage = () => {
   const faqs = [
     {
       q: "Are OZME perfumes long-lasting?",
-      a: "Yes, our perfumes are crafted with high-quality Eau de Parfum (EDP) concentration, giving 8–12 hours of long-lasting performance."
+      a: "Yes, our perfumes are crafted with high-quality Extrait de Parfum concentration, giving 8–12 hours of long-lasting performance."
     },
     {
       q: "Are the fragrance oils imported from France?",
@@ -26,7 +26,7 @@ const FAQsPage = () => {
     },
     {
       q: "What is the concentration level of your perfumes?",
-      a: "All OZME perfumes are EDP (Eau de Parfum) with 20–30% perfume oil concentration."
+      a: "All OZME perfumes are Extrait de Parfum with 25–30% perfume oil concentration."
     },
     {
       q: "Is the perfume safe for skin?",
@@ -34,7 +34,7 @@ const FAQsPage = () => {
     },
     {
       q: "What is the shelf life?",
-      a: "Our perfumes have a shelf life of 36 months from the date of manufacture."
+      a: "Our perfumes have a shelf life of 48 months from the date of manufacture."
     },
     {
       q: "How should I store my perfume?",
@@ -46,7 +46,7 @@ const FAQsPage = () => {
     },
     {
       q: "Are the perfumes unisex?",
-      a: "We offer Men's, Women's, and Unisex collections."
+      a: "Yes — we offer Unisex fragrances, along with Men's and Women's collections."
     },
     {
       q: "Do you offer Cash on Delivery?",

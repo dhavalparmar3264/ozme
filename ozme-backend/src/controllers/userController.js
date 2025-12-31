@@ -59,9 +59,16 @@ export const getAddresses = async (req, res) => {
       });
     }
 
+    // Sort addresses: default first, then by createdAt (newest first)
+    const addresses = (user.addresses || []).sort((a, b) => {
+      if (a.isDefault && !b.isDefault) return -1;
+      if (!a.isDefault && b.isDefault) return 1;
+      return new Date(b.createdAt || b._id.getTimestamp()) - new Date(a.createdAt || a._id.getTimestamp());
+    });
+
     res.json({
       success: true,
-      data: { addresses: user.addresses || [] },
+      data: { addresses },
     });
   } catch (error) {
     res.status(500).json({
@@ -77,7 +84,15 @@ export const getAddresses = async (req, res) => {
  */
 export const addAddress = async (req, res) => {
   try {
-    const { type, name, phone, address, city, state, pincode, country, isDefault } = req.body;
+    const { firstName, lastName, email, phone, street, apartment, city, state, pinCode, country, isDefault } = req.body;
+
+    // Validate required fields
+    if (!firstName || !lastName || !email || !phone || !street || !city || !state || !pinCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: firstName, lastName, email, phone, street, city, state, pinCode',
+      });
+    }
 
     const user = await User.findById(req.user.id);
 
@@ -97,15 +112,18 @@ export const addAddress = async (req, res) => {
 
     // Add new address
     const newAddress = {
-      type,
-      name,
-      phone,
-      address,
-      city,
-      state,
-      pincode,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone.trim(),
+      street: street.trim(),
+      apartment: apartment ? apartment.trim() : '',
+      city: city.trim(),
+      state: state.trim(),
+      pinCode: pinCode.trim(),
       country: country || 'India',
       isDefault: isDefault || false,
+      createdAt: new Date(),
     };
 
     user.addresses.push(newAddress);
@@ -131,7 +149,7 @@ export const addAddress = async (req, res) => {
 export const updateAddress = async (req, res) => {
   try {
     const { addressId } = req.params;
-    const { type, name, phone, address, city, state, pincode, country, isDefault } = req.body;
+    const { firstName, lastName, email, phone, street, apartment, city, state, pinCode, country, isDefault } = req.body;
 
     const user = await User.findById(req.user.id);
 
@@ -164,14 +182,16 @@ export const updateAddress = async (req, res) => {
 
     // Update address
     const addressToUpdate = user.addresses[addressIndex];
-    if (type) addressToUpdate.type = type;
-    if (name) addressToUpdate.name = name;
-    if (phone) addressToUpdate.phone = phone;
-    if (address) addressToUpdate.address = address;
-    if (city) addressToUpdate.city = city;
-    if (state) addressToUpdate.state = state;
-    if (pincode) addressToUpdate.pincode = pincode;
-    if (country) addressToUpdate.country = country;
+    if (firstName !== undefined) addressToUpdate.firstName = firstName.trim();
+    if (lastName !== undefined) addressToUpdate.lastName = lastName.trim();
+    if (email !== undefined) addressToUpdate.email = email.trim().toLowerCase();
+    if (phone !== undefined) addressToUpdate.phone = phone.trim();
+    if (street !== undefined) addressToUpdate.street = street.trim();
+    if (apartment !== undefined) addressToUpdate.apartment = apartment ? apartment.trim() : '';
+    if (city !== undefined) addressToUpdate.city = city.trim();
+    if (state !== undefined) addressToUpdate.state = state.trim();
+    if (pinCode !== undefined) addressToUpdate.pinCode = pinCode.trim();
+    if (country !== undefined) addressToUpdate.country = country;
     if (isDefault !== undefined) addressToUpdate.isDefault = isDefault;
 
     await user.save();
@@ -217,12 +237,69 @@ export const deleteAddress = async (req, res) => {
       });
     }
 
+    const wasDefault = user.addresses[addressIndex].isDefault;
     user.addresses.splice(addressIndex, 1);
+    
+    // If deleted address was default, set first remaining address as default
+    if (wasDefault && user.addresses.length > 0) {
+      user.addresses[0].isDefault = true;
+    }
+    
     await user.save();
 
     res.json({
       success: true,
       message: 'Address deleted successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+/**
+ * Set default address
+ * @route PATCH /api/users/me/addresses/:addressId/default
+ */
+export const setDefaultAddress = async (req, res) => {
+  try {
+    const { addressId } = req.params;
+
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    const addressIndex = user.addresses.findIndex(
+      (addr) => addr._id.toString() === addressId
+    );
+
+    if (addressIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Address not found',
+      });
+    }
+
+    // Unset all other defaults
+    user.addresses.forEach((addr) => {
+      addr.isDefault = false;
+    });
+
+    // Set this address as default
+    user.addresses[addressIndex].isDefault = true;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Default address updated successfully',
+      data: { address: user.addresses[addressIndex] },
     });
   } catch (error) {
     res.status(500).json({
