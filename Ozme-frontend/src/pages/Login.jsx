@@ -1,162 +1,197 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, User, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Phone, ArrowRight, AlertCircle, CheckCircle2, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { apiRequest } from '../utils/api';
 
 export default function LuxuryLoginPage() {
-  const [isLogin, setIsLogin] = useState(true);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-    confirmPassword: '',
-    name: '',
-    phone: '',
-  });
+  const [step, setStep] = useState('phone'); // 'phone' | 'otp' | 'email'
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isSendingOTP, setIsSendingOTP] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [errors, setErrors] = useState({});
-  const [passwordValidation, setPasswordValidation] = useState({
-    length: false,
-    uppercase: false,
-    number: false,
-  });
-  const { login, signup, googleLogin } = useAuth();
+  const { googleLogin, checkAuth } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from?.pathname || '/';
+  // Check sessionStorage for redirect path (set by feedback page) or use location state
+  const from = sessionStorage.getItem('post_login_redirect') || location.state?.from?.pathname || '/';
 
-  // Password validation helper
-  const validatePassword = (password) => {
-    const validation = {
-      length: password.length >= 8,
-      uppercase: /[A-Z]/.test(password),
-      number: /[0-9]/.test(password),
-    };
-    setPasswordValidation(validation);
-    return validation.length && validation.uppercase && validation.number;
-  };
+  // Cooldown timer
+  useEffect(() => {
+    if (cooldownSeconds > 0) {
+      const timer = setTimeout(() => setCooldownSeconds(cooldownSeconds - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [cooldownSeconds]);
 
-  // Validate form before submission
-  const validateForm = () => {
-    const newErrors = {};
-
-    if (!isLogin) {
-      // Signup validation
-      if (!formData.name.trim()) {
-        newErrors.name = 'Name is required';
-      }
-
-      if (!formData.password) {
-        newErrors.password = 'Password is required';
-      } else if (!validatePassword(formData.password)) {
-        newErrors.password = 'Password must be at least 8 characters and include one uppercase letter and one number.';
-      }
-
-      if (!formData.confirmPassword) {
-        newErrors.confirmPassword = 'Please confirm your password';
-      } else if (formData.password !== formData.confirmPassword) {
-        newErrors.confirmPassword = 'Passwords do not match.';
-      }
-    } else {
-      // Login validation
-      if (!formData.email.trim()) {
-        newErrors.email = 'Email is required';
-      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-        newErrors.email = 'Please enter a valid email address';
-      }
-
-      if (!formData.password) {
-        newErrors.password = 'Password is required';
-      }
+  const handleSendOTP = async (e) => {
+    e?.preventDefault();
+    
+    if (!phone.trim()) {
+      setErrors({ phone: 'Phone number is required' });
+      return;
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+    // Validate phone format (10-digit Indian mobile)
+    const phoneRegex = /^[6-9]\d{9}$/;
+    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
     
-    // Clear previous errors
+    if (!phoneRegex.test(cleanPhone)) {
+      setErrors({ phone: 'Please enter a valid 10-digit Indian mobile number' });
+      return;
+    }
+
+    setIsSendingOTP(true);
     setErrors({});
 
-    // Validate form
-    if (!validateForm()) {
+    try {
+      const response = await apiRequest('/auth/otp/send', {
+        method: 'POST',
+        body: JSON.stringify({ phone: cleanPhone }),
+      });
+
+      if (response && response.success) {
+        toast.success('OTP sent successfully!');
+        setStep('otp');
+        setCooldownSeconds(response.data?.cooldownSeconds || 60);
+        
+        // In test mode, show OTP in toast
+        if (response.data?.testMode && response.data?.otp) {
+          toast(`Test Mode: Your OTP is ${response.data.otp}`, { duration: 10000 });
+        }
+      } else {
+        throw new Error(response?.message || 'Failed to send OTP');
+      }
+    } catch (error) {
+      console.error('Send OTP error:', error);
+      
+      if (error.response?.status === 429) {
+        const waitTime = error.response?.data?.waitTime || error.response?.data?.cooldownSeconds || 60;
+        setCooldownSeconds(waitTime);
+        toast.error(`Please wait ${waitTime} seconds before requesting a new OTP`);
+      } else {
+        toast.error(error.message || 'Failed to send OTP. Please try again.');
+      }
+    } finally {
+      setIsSendingOTP(false);
+    }
+  };
+
+  const handleVerifyOTP = async (e) => {
+    e.preventDefault();
+    
+    if (!otp.trim()) {
+      setErrors({ otp: 'OTP is required' });
+      return;
+    }
+
+    if (otp.length !== 6) {
+      setErrors({ otp: 'OTP must be 6 digits' });
       return;
     }
 
     setIsSubmitting(true);
+    setErrors({});
 
     try {
-      if (isLogin) {
-        // Login
-        const result = await login({
-          email: formData.email,
-          password: formData.password,
-        });
+      const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+      const response = await apiRequest('/auth/otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({ phone: cleanPhone, otp }),
+      });
 
-        if (result.success) {
-          // Navigate to dashboard after successful login
-          navigate('/dashboard', { replace: true });
+      if (response && response.success) {
+        // Refresh auth state
+        await checkAuth();
+        
+        // Check if new user (needs email)
+        if (response.isNewUser) {
+          setStep('email');
+          toast.success('OTP verified! Please provide your email');
         } else {
-          // Show specific error message based on error code
-          let errorMessage = result.error || 'Login failed. Please try again or contact support.';
-          
-          // Handle specific error codes
-          if (result.errorCode === 'BACKEND_OFFLINE') {
-            errorMessage = 'Unable to connect to the server. Please try again later.';
-          } else if (result.errorCode === 'DATABASE_UNAVAILABLE') {
-            errorMessage = 'Database is not available. Please try again later.';
-          } else if (result.errorCode === 'USER_NOT_FOUND') {
-            errorMessage = 'No account found with this email.';
-          } else if (result.errorCode === 'WRONG_PASSWORD') {
-            errorMessage = 'Incorrect password. Please try again.';
-          }
-          
-          toast.error(errorMessage, { duration: 5000 });
+          // Existing user - redirect immediately
+          handleRedirect();
         }
       } else {
-        // Signup
-        const result = await signup({
-          name: formData.name,
-          email: formData.email,
-          password: formData.password,
-          phone: formData.phone || undefined,
-        });
-
-        if (result.success) {
-          // Navigate to dashboard after successful registration
-          navigate('/dashboard', { replace: true });
-        } else {
-          // Show specific error message based on error code
-          let errorMessage = result.error || 'Registration failed due to an unexpected issue.';
-          
-          // Handle specific error codes
-          if (result.errorCode === 'BACKEND_OFFLINE') {
-            errorMessage = 'Unable to connect to the server. Please try again later.';
-          } else if (result.errorCode === 'DATABASE_UNAVAILABLE') {
-            errorMessage = 'Database is not available. Please try again later.';
-          } else if (result.errorCode === 'USER_EXISTS') {
-            errorMessage = 'An account with this email already exists.';
-          } else if (result.errorCode === 'PASSWORD_TOO_SHORT') {
-            errorMessage = 'Password must be at least 8 characters long.';
-          } else if (result.errorCode === 'PASSWORD_NO_UPPERCASE') {
-            errorMessage = 'Password must contain at least one uppercase letter.';
-          } else if (result.errorCode === 'PASSWORD_NO_NUMBER') {
-            errorMessage = 'Password must contain at least one number.';
-          }
-          
-          toast.error(errorMessage, { duration: 5000 });
-        }
+        throw new Error(response?.message || 'Invalid OTP');
       }
     } catch (error) {
-      console.error('Auth error:', error);
-      toast.error('An unexpected error occurred. Please try again.');
+      console.error('Verify OTP error:', error);
+      
+      if (error.response?.status === 400) {
+        const attemptsLeft = error.response?.data?.attemptsLeft;
+        if (attemptsLeft !== undefined) {
+          toast.error(`Invalid OTP. ${attemptsLeft} attempts remaining`);
+        } else {
+          toast.error(error.response?.data?.message || 'Invalid OTP');
+        }
+      } else if (error.response?.status === 423) {
+        toast.error('Too many wrong attempts. Please request a new OTP');
+        setStep('phone');
+        setOtp('');
+      } else {
+        toast.error(error.message || 'Failed to verify OTP. Please try again.');
+      }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveEmail = async (e) => {
+    e.preventDefault();
+    
+    if (!email.trim()) {
+      setErrors({ email: 'Email is required' });
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setErrors({ email: 'Please enter a valid email address' });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrors({});
+
+    try {
+      const response = await apiRequest('/auth/profile/email', {
+        method: 'POST',
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      if (response && response.success) {
+        toast.success('Email saved successfully!');
+        handleRedirect();
+      } else {
+        throw new Error(response?.message || 'Failed to save email');
+      }
+    } catch (error) {
+      console.error('Save email error:', error);
+      
+      if (error.response?.status === 409) {
+        toast.error('This email is already registered');
+      } else {
+        toast.error(error.message || 'Failed to save email. Please try again.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRedirect = () => {
+    // Get redirect path and clear it
+    const redirectPath = sessionStorage.getItem('post_login_redirect');
+    if (redirectPath) {
+      sessionStorage.removeItem('post_login_redirect');
+      navigate(redirectPath, { replace: true });
+    } else {
+      // Use location state or default to home
+      navigate(from !== '/' ? from : '/', { replace: true });
     }
   };
 
@@ -165,10 +200,16 @@ export default function LuxuryLoginPage() {
     try {
       const result = await googleLogin();
       if (result && result.success) {
-        // Navigate to dashboard after successful Google login
-        navigate('/dashboard', { replace: true });
+        // Check for explicit redirect path first (from feedback page)
+        const redirectPath = sessionStorage.getItem('post_login_redirect');
+        if (redirectPath) {
+          // Don't clear redirect key here - let feedback page clear it after successful submission
+          navigate(redirectPath, { replace: true });
+        } else {
+          // Use location state or default to home
+          navigate(from !== '/' ? from : '/', { replace: true });
+        }
       } else if (result && result.error) {
-        // Show error message if login failed
         toast.error(result.error || 'Google login failed. Please try again.');
       }
     } catch (error) {
@@ -179,41 +220,10 @@ export default function LuxuryLoginPage() {
     }
   };
 
-  const toggleMode = () => {
-    setIsLogin(!isLogin);
-    setFormData({
-      email: '',
-      password: '',
-      confirmPassword: '',
-      name: '',
-      phone: '',
-    });
+  const handleBackToPhone = () => {
+    setStep('phone');
+    setOtp('');
     setErrors({});
-    setPasswordValidation({
-      length: false,
-      uppercase: false,
-      number: false,
-    });
-  };
-
-  const handlePasswordChange = (value) => {
-    setFormData({ ...formData, password: value });
-    if (!isLogin) {
-      validatePassword(value);
-      // Clear confirm password error if passwords match
-      if (formData.confirmPassword && value === formData.confirmPassword) {
-        setErrors({ ...errors, confirmPassword: '' });
-      }
-    }
-  };
-
-  const handleConfirmPasswordChange = (value) => {
-    setFormData({ ...formData, confirmPassword: value });
-    if (formData.password && value !== formData.password) {
-      setErrors({ ...errors, confirmPassword: 'Passwords do not match.' });
-    } else {
-      setErrors({ ...errors, confirmPassword: '' });
-    }
   };
 
   return (
@@ -235,337 +245,245 @@ export default function LuxuryLoginPage() {
         {/* Logo/Brand Section */}
         <div className="text-center mb-12 animate-fadeIn">
           <h1 className="text-4xl md:text-5xl font-light text-white mb-3 tracking-tight">
-            {isLogin ? 'Welcome' : 'Join Us'}
+            Welcome
             <span className="block font-serif italic text-amber-300 mt-2">
-              {isLogin ? 'Back' : 'Today'}
+              Back
             </span>
           </h1>
-
           <p className="text-gray-400 font-light">
-            {isLogin ? 'Sign in to continue your fragrance journey' : 'Create your account and discover luxury'}
+            Sign in to continue your fragrance journey
           </p>
         </div>
 
         {/* Form Container */}
         <div className="bg-white/5 backdrop-blur-xl rounded-none border border-white/10 p-8 shadow-2xl">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {!isLogin && (
-              <div className="animate-slideDown">
+          {/* Phone Step */}
+          {step === 'phone' && (
+            <form onSubmit={handleSendOTP} className="space-y-6">
+              <div>
                 <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-3">
-                  Full Name
+                  Phone Number
                 </label>
                 <div className="relative">
                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                    <User className="w-5 h-5" />
-                  </div>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => {
-                      setFormData({ ...formData, name: e.target.value });
-                      setErrors({ ...errors, name: '' });
-                    }}
-                    className={`w-full pl-12 pr-4 py-4 bg-white/5 border ${
-                      errors.name ? 'border-red-500' : 'border-white/10'
-                    } text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 transition-all duration-300`}
-                    placeholder="Enter your full name"
-                    required={!isLogin}
-                  />
-                </div>
-                {errors.name && (
-                  <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    {errors.name}
-                  </p>
-                )}
-              </div>
-            )}
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-3">
-                Email Address
-              </label>
-              <div className="relative">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                  <Mail className="w-5 h-5" />
-                </div>
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => {
-                    setFormData({ ...formData, email: e.target.value });
-                    setErrors({ ...errors, email: '' });
-                  }}
-                  className={`w-full pl-12 pr-4 py-4 bg-white/5 border ${
-                    errors.email ? 'border-red-500' : 'border-white/10'
-                  } text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 transition-all duration-300`}
-                  placeholder="Enter your email"
-                  required
-                />
-              </div>
-              {errors.email && (
-                <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  {errors.email}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-3">
-                Password
-              </label>
-              <div className="relative">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                  <Lock className="w-5 h-5" />
-                </div>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={formData.password}
-                  onChange={(e) => handlePasswordChange(e.target.value)}
-                  className={`w-full pl-12 pr-12 py-4 bg-white/5 border ${
-                    errors.password ? 'border-red-500' : 'border-white/10'
-                  } text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 transition-all duration-300`}
-                  placeholder="Enter your password"
-                  required
-                  minLength={isLogin ? 6 : 8}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-              {errors.password && (
-                <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  {errors.password}
-                </p>
-              )}
-              {!isLogin && formData.password && (
-                <div className="mt-2 space-y-1">
-                  <p className="text-xs text-gray-400 mb-2">Password requirements:</p>
-                  <div className="space-y-1">
-                    <div className={`flex items-center gap-2 text-xs ${passwordValidation.length ? 'text-green-400' : 'text-gray-500'}`}>
-                      {passwordValidation.length ? (
-                        <CheckCircle2 className="w-3 h-3" />
-                      ) : (
-                        <div className="w-3 h-3 rounded-full border border-gray-500" />
-                      )}
-                      At least 8 characters
-                    </div>
-                    <div className={`flex items-center gap-2 text-xs ${passwordValidation.uppercase ? 'text-green-400' : 'text-gray-500'}`}>
-                      {passwordValidation.uppercase ? (
-                        <CheckCircle2 className="w-3 h-3" />
-                      ) : (
-                        <div className="w-3 h-3 rounded-full border border-gray-500" />
-                      )}
-                      One uppercase letter
-                    </div>
-                    <div className={`flex items-center gap-2 text-xs ${passwordValidation.number ? 'text-green-400' : 'text-gray-500'}`}>
-                      {passwordValidation.number ? (
-                        <CheckCircle2 className="w-3 h-3" />
-                      ) : (
-                        <div className="w-3 h-3 rounded-full border border-gray-500" />
-                      )}
-                      One number
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {!isLogin && (
-              <div className="animate-slideDown">
-                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-3">
-                  Confirm Password
-                </label>
-                <div className="relative">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                    <Lock className="w-5 h-5" />
-                  </div>
-                  <input
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    value={formData.confirmPassword}
-                    onChange={(e) => handleConfirmPasswordChange(e.target.value)}
-                    className={`w-full pl-12 pr-12 py-4 bg-white/5 border ${
-                      errors.confirmPassword ? 'border-red-500' : 'border-white/10'
-                    } text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 transition-all duration-300`}
-                    placeholder="Confirm your password"
-                    required={!isLogin}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
-                  >
-                    {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  </button>
-                </div>
-                {errors.confirmPassword && (
-                  <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    {errors.confirmPassword}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {!isLogin && (
-              <div className="animate-slideDown">
-                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-3">
-                  Phone Number (Optional)
-                </label>
-                <div className="relative">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                    </svg>
+                    <Phone className="w-5 h-5" />
                   </div>
                   <input
                     type="tel"
-                    value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    className="w-full pl-12 pr-4 py-4 bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 transition-all duration-300"
-                    placeholder="Enter your phone number"
+                    value={phone}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setPhone(value);
+                      setErrors({ ...errors, phone: '' });
+                    }}
+                    className={`w-full pl-12 pr-4 py-4 bg-white/5 border ${
+                      errors.phone ? 'border-red-500' : 'border-white/10'
+                    } text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 transition-all duration-300`}
+                    placeholder="Enter 10-digit mobile number"
+                    maxLength={10}
+                    required
                   />
                 </div>
+                {errors.phone && (
+                  <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {errors.phone}
+                  </p>
+                )}
               </div>
-            )}
 
-            {isLogin && (
-              <div className="text-right">
+              <button
+                type="submit"
+                disabled={isSendingOTP || cooldownSeconds > 0}
+                className={`w-full py-4 px-6 bg-white text-black font-semibold hover:bg-gray-100 transition-all duration-300 flex items-center justify-center gap-2 ${
+                  isSendingOTP || cooldownSeconds > 0 ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                {isSendingOTP ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+                    Sending OTP...
+                  </>
+                ) : cooldownSeconds > 0 ? (
+                  `Resend OTP in ${cooldownSeconds}s`
+                ) : (
+                  <>
+                    Send OTP
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+
+          {/* OTP Step */}
+          {step === 'otp' && (
+            <form onSubmit={handleVerifyOTP} className="space-y-6">
+              <div>
                 <button
                   type="button"
-                  onClick={() => toast('Password reset feature coming soon!', { icon: '🛠️' })}
-                  className="text-sm text-amber-400 hover:text-amber-300 transition-colors font-light"
+                  onClick={handleBackToPhone}
+                  className="text-gray-400 hover:text-white text-sm mb-4 flex items-center gap-1"
                 >
-                  Forgot Password?
+                  ← Change phone number
                 </button>
+                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-3">
+                  Enter OTP
+                </label>
+                <p className="text-gray-400 text-sm mb-4">
+                  OTP sent to {phone.replace(/(\d{2})(\d{4})(\d{4})/, '+91 $1 $2 $3')}
+                </p>
+                <input
+                  type="text"
+                  value={otp}
+                  onChange={(e) => {
+                    const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+                    setOtp(value);
+                    setErrors({ ...errors, otp: '' });
+                  }}
+                  className={`w-full px-4 py-4 bg-white/5 border ${
+                    errors.otp ? 'border-red-500' : 'border-white/10'
+                  } text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 transition-all duration-300 text-center text-2xl tracking-widest`}
+                  placeholder="000000"
+                  maxLength={6}
+                  required
+                  autoFocus
+                />
+                {errors.otp && (
+                  <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {errors.otp}
+                  </p>
+                )}
               </div>
-            )}
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-4 bg-white text-black font-semibold text-sm tracking-[0.2em] uppercase hover:bg-amber-300 transition-all duration-300 shadow-lg hover:shadow-2xl hover:shadow-amber-300/20 flex items-center justify-center gap-3 group disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-black"></div>
-                  <span>Please wait...</span>
-                </>
-              ) : (
-                <>
-                  {isLogin ? 'Sign In' : 'Create Account'}
-                  <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                </>
-              )}
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={isSubmitting || otp.length !== 6}
+                className={`w-full py-4 px-6 bg-white text-black font-semibold hover:bg-gray-100 transition-all duration-300 flex items-center justify-center gap-2 ${
+                  isSubmitting || otp.length !== 6 ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    Verify OTP
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSendOTP}
+                disabled={cooldownSeconds > 0}
+                className="w-full py-3 px-6 text-gray-400 hover:text-white text-sm transition-colors"
+              >
+                {cooldownSeconds > 0 ? `Resend OTP in ${cooldownSeconds}s` : 'Resend OTP'}
+              </button>
+            </form>
+          )}
+
+          {/* Email Step (for new users) */}
+          {step === 'email' && (
+            <form onSubmit={handleSaveEmail} className="space-y-6">
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-3">
+                  Email Address
+                </label>
+                <p className="text-gray-400 text-sm mb-4">
+                  Please provide your email to complete registration
+                </p>
+                <div className="relative">
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setErrors({ ...errors, email: '' });
+                    }}
+                    className={`w-full pl-12 pr-4 py-4 bg-white/5 border ${
+                      errors.email ? 'border-red-500' : 'border-white/10'
+                    } text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 transition-all duration-300`}
+                    placeholder="Enter your email"
+                    required
+                    autoFocus
+                  />
+                </div>
+                {errors.email && (
+                  <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {errors.email}
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className={`w-full py-4 px-6 bg-white text-black font-semibold hover:bg-gray-100 transition-all duration-300 flex items-center justify-center gap-2 ${
+                  isSubmitting ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    Continue
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+            </form>
+          )}
 
           {/* Divider */}
-          <div className="relative my-8">
+          <div className="relative my-6">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/10" />
+              <div className="w-full border-t border-white/10"></div>
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-transparent text-gray-400 font-light tracking-wider">
-                Or continue with
-              </span>
+              <span className="px-4 bg-transparent text-gray-400">Or continue with</span>
             </div>
           </div>
 
-          {/* Google Login */}
+          {/* Google Login Button */}
           <button
-            type="button"
             onClick={handleGoogleLogin}
-            disabled={isGoogleLoading || isSubmitting}
-            className="w-full py-4 bg-white/5 border border-white/10 text-white font-semibold hover:bg-white/10 hover:border-white/20 transition-all duration-300 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isGoogleLoading}
+            className={`w-full py-4 px-6 bg-white/5 border border-white/10 text-white font-semibold hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 ${
+              isGoogleLoading ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
           >
             {isGoogleLoading ? (
               <>
-                <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>
-                <span>Signing in...</span>
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                Signing in...
               </>
             ) : (
               <>
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
-                  <path
-                    fill="currentColor"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                  />
+                  <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                  <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
                 </svg>
                 Sign in with Google
               </>
             )}
           </button>
-
-          {/* Toggle Login/Signup */}
-          <p className="text-center text-sm text-gray-400 mt-8 font-light">
-            {isLogin ? "Don't have an account?" : "Already have an account?"}
-            {' '}
-            <button
-              type="button"
-              onClick={toggleMode}
-              className="text-amber-400 hover:text-amber-300 font-semibold transition-colors"
-            >
-              {isLogin ? 'Sign Up' : 'Sign In'}
-            </button>
-          </p>
-        </div>
-
-        {/* Decorative Bottom Line */}
-        <div className="flex justify-center mt-8">
-          <div className="h-px w-48 bg-gradient-to-r from-transparent via-amber-400/60 to-transparent"></div>
         </div>
       </div>
-
-      <style>{`
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-            transform: translateY(-20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes slideDown {
-          from {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        .animate-fadeIn {
-          animation: fadeIn 0.8s ease-out;
-        }
-
-        .animate-slideDown {
-          animation: slideDown 0.4s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

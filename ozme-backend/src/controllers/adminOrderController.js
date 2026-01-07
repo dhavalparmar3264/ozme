@@ -14,7 +14,7 @@ const reduceOrderStock = async (orderItems) => {
       continue;
     }
 
-    const orderedSize = orderItem.size || '100ML';
+    const orderedSize = orderItem.size || '120ML';
     const orderedQuantity = orderItem.quantity || 1;
 
     // Check if product has sizes array

@@ -20,15 +20,15 @@ router.post('/razorpay/create-order', protect, createPaymentOrder);
 router.post('/razorpay/verify', protect, verifyPayment);
 router.post('/razorpay/failed', protect, handlePaymentFailure);
 
-// Cashfree payment routes (kept for backward compatibility)
+// Cashfree payment routes (PROD - Primary payment gateway)
 router.post('/cashfree/create', protect, createCashfreePayment);
 router.post('/cashfree/webhook', handleCashfreeWebhook); // Public - webhook endpoint
 router.get('/cashfree/status/:orderId', protect, getCashfreePaymentStatus);
 
-// PhonePe payment routes (PROD Pay Page - Checksum/Salt flow)
+// Legacy payment routes (kept for backward compatibility)
 router.post('/phonepe/create', protect, initiatePhonePePayment);
-router.post('/phonepe/callback', phonepeCallback); // Public - callback/webhook endpoint
-router.get('/phonepe/status/:merchantTransactionId', phonepeGetPaymentStatus); // Public - status check for success page
-router.get('/phonepe/verify/:orderId', protect, phonepeVerifyPayment); // Legacy endpoint
+router.post('/phonepe/callback', phonepeCallback);
+router.get('/phonepe/status/:merchantTransactionId', phonepeGetPaymentStatus);
+router.get('/phonepe/verify/:orderId', protect, phonepeVerifyPayment);
 
 export default router;

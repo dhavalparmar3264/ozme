@@ -36,7 +36,7 @@ const orderSchema = new mongoose.Schema(
         },
         size: {
           type: String,
-          default: '100ml',
+          default: '120ml',
         },
         price: {
           type: Number,
@@ -63,6 +63,10 @@ const orderSchema = new mongoose.Schema(
       enum: ['Pending', 'Paid', 'Failed', 'Refunded'],
       default: 'Pending',
     },
+    failureReason: {
+      type: String,
+      default: null, // e.g., 'TIMEOUT_PENDING_OVER_20_MIN', 'CANCELLED', 'EXPIRED', etc.
+    },
     paymentId: {
       type: String,
       default: null, // Payment gateway transaction ID
@@ -72,14 +76,63 @@ const orderSchema = new mongoose.Schema(
       enum: ['RAZORPAY', 'CASHFREE', 'PHONEPE'],
       default: null, // Payment gateway used
     },
+    paymentMethodType: {
+      type: String,
+      default: null, // Payment method type: 'UPI', 'Credit Card', 'Debit Card', 'Net Banking', 'Wallet', etc.
+    },
     merchantTransactionId: {
       type: String,
       default: null, // PhonePe merchant transaction ID
+    },
+    cashfreeOrderId: {
+      type: String,
+      default: null, // Cashfree order ID (for payment verification)
     },
     paidAt: {
       type: Date,
       default: null, // Payment completion timestamp
     },
+    paymentInitiatedAt: {
+      type: Date,
+      default: null, // When payment was first initiated (for timeout calculation)
+    },
+    lastPaymentAttemptAt: {
+      type: Date,
+      default: null, // When last payment attempt was initiated (for retry timeout)
+    },
+    lastVerifiedAt: {
+      type: Date,
+      default: null, // Last time payment status was verified with Cashfree
+    },
+    paymentAttempts: [
+      {
+        attemptId: {
+          type: String,
+          required: true, // Unique attempt ID (e.g., timestamp-based)
+        },
+        cashfreeOrderId: {
+          type: String,
+          required: true, // Cashfree order ID for this attempt
+        },
+        paymentSessionId: {
+          type: String,
+          default: null, // Cashfree payment session ID
+        },
+        initiatedAt: {
+          type: Date,
+          required: true, // When this attempt was initiated
+        },
+        status: {
+          type: String,
+          enum: ['PENDING', 'SUCCESS', 'FAILED', 'CANCELLED', 'EXPIRED'],
+          default: 'PENDING',
+        },
+        completedAt: {
+          type: Date,
+          default: null, // When attempt was completed (success/failure)
+        },
+      },
+    ],
     orderStatus: {
       type: String,
       enum: ['Pending', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled'],
@@ -158,6 +211,10 @@ orderSchema.set('toJSON', { virtuals: true });
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ orderStatus: 1 });
 orderSchema.index({ trackingNumber: 1 });
+// Performance indexes for dashboard queries
+orderSchema.index({ paymentStatus: 1, orderStatus: 1 });
+orderSchema.index({ paymentMethod: 1, orderStatus: 1 });
+orderSchema.index({ createdAt: -1 }); // For recent orders query
 
 const Order = mongoose.model('Order', orderSchema);
 

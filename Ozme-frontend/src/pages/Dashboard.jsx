@@ -12,6 +12,15 @@ export default function LuxuryDashboard() {
   const { wishlist, getWishlistCount } = useWishlist();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');
+
+  // Fallback: Check for redirect path on mount (catches missed redirects)
+  useEffect(() => {
+    const redirectPath = sessionStorage.getItem('post_login_redirect');
+    if (redirectPath) {
+      // Don't clear redirect key here - let feedback page clear it after successful submission
+      navigate(redirectPath, { replace: true });
+    }
+  }, [navigate]);
   const [loading, setLoading] = useState(false);
   const [orders, setOrders] = useState([]);
   const [addresses, setAddresses] = useState([]);
@@ -52,7 +61,8 @@ export default function LuxuryDashboard() {
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [otpTimer, setOtpTimer] = useState(0);
-  const [phoneVerified, setPhoneVerified] = useState(false);
+  // REMOVED: phoneVerified local state - use ONLY user?.phoneVerified from auth context
+  // REMOVED: showChangePhone - no longer allowing phone changes after verification
 
   // Fetch user data and orders on mount
   useEffect(() => {
@@ -67,13 +77,32 @@ export default function LuxuryDashboard() {
   // Update profile form when user data loads
   useEffect(() => {
     if (user) {
+      // Normalize verification status: phoneVerified is single source of truth
+      const isVerified = user.phoneVerified === true || user.isPhoneVerified === true;
+      
       setProfile({
         name: user.name || '',
         email: user.email || '',
         phone: user.phone || '',
       });
-      setPhoneVerified(user.phoneVerified || false);
+      
+      // Set phone input from user data
       setPhoneInput(user.phone || '');
+      
+      // CRITICAL: If user is verified, ensure OTP form is reset/hidden
+      if (isVerified) {
+        setShowOtpInput(false);
+        setOtpInput(''); // Clear any OTP input
+      }
+      
+      // Debug: Log verification status (temporary)
+      console.log('[Dashboard] User loaded - phoneVerified:', user.phoneVerified, 'isPhoneVerified:', user.isPhoneVerified, 'isVerified:', isVerified, 'phone:', user.phone);
+    } else {
+      // User is null - reset form state
+      setProfile({ name: '', email: '', phone: '' });
+      setPhoneInput('');
+      setShowOtpInput(false);
+      setOtpInput('');
     }
   }, [user]);
 
@@ -122,10 +151,19 @@ export default function LuxuryDashboard() {
         setOtpTimer(30); // 30 seconds before resend
         toast.success('OTP sent to your phone!');
       } else {
+        // Check for 409 Conflict (phone already linked)
+        if (response?.errorCode === 'PHONE_ALREADY_LINKED' || response?.errorCode === 'PHONE_IN_USE') {
+          throw new Error('This phone number is already linked to another account. Please use a different number.');
+        }
         throw new Error(response?.message || 'Failed to send OTP');
       }
     } catch (error) {
-      toast.error(error.message || 'Failed to send OTP');
+      // Handle 409 Conflict errors with clear message
+      if (error.message && error.message.includes('already linked')) {
+        toast.error('This phone number is already linked to another account. Please use a different number.');
+      } else {
+        toast.error(error.message || 'Failed to send OTP');
+      }
     } finally {
       setIsSendingOtp(false);
     }
@@ -149,12 +187,49 @@ export default function LuxuryDashboard() {
       });
 
       if (response && response.success) {
-        setPhoneVerified(true);
+        // Debug: Log verification response (temporary)
+        console.log('[Dashboard] OTP verify response - phoneVerified:', response.data?.phoneVerified, 'user.phoneVerified:', response.data?.user?.phoneVerified);
+        
+        // Extract verification data from response
+        const verifiedPhone = response.data?.phone || response.data?.user?.phone;
+        const isVerified = response.data?.phoneVerified === true || 
+                          response.data?.isPhoneVerified === true ||
+                          response.data?.user?.phoneVerified === true ||
+                          response.data?.user?.isPhoneVerified === true;
+        
+        // OPTIMISTIC UI UPDATE: Clear OTP UI immediately
         setShowOtpInput(false);
-        setProfile(prev => ({ ...prev, phone: response.data.phone }));
+        setOtpInput('');
+        
+        // Update phone input if provided
+        if (verifiedPhone) {
+          setProfile(prev => ({ ...prev, phone: verifiedPhone }));
+          setPhoneInput(verifiedPhone);
+        }
+        
         toast.success('Phone number verified successfully! 🎉');
-        // Refresh user data
-        await checkAuth();
+        
+        // CRITICAL: Refresh auth context ONCE to get latest backend state from /api/auth/me
+        // Backend is the ultimate authority - frontend should NEVER show verified unless backend returns phoneVerified=true
+        const updatedUser = await checkAuth();
+        
+        // Debug: Log auth context after refresh (temporary)
+        console.log('[Dashboard] After OTP verify checkAuth - returned user.phoneVerified:', updatedUser?.phoneVerified, 'context user.phoneVerified:', user?.phoneVerified);
+        
+        // Verify backend returned verified=true (safety check)
+        if (updatedUser && (updatedUser.phoneVerified === true || updatedUser.isPhoneVerified === true)) {
+          console.log('[Dashboard] ✅ Backend confirmed phoneVerified=true - UI will update via useEffect');
+        } else {
+          console.warn('[Dashboard] ⚠️ Backend did not return phoneVerified=true - UI may not update correctly');
+          // Force one more checkAuth if backend didn't return verified (only once, with delay to avoid race)
+          setTimeout(async () => {
+            const retryUser = await checkAuth();
+            console.log('[Dashboard] After retry checkAuth - user.phoneVerified:', retryUser?.phoneVerified || user?.phoneVerified);
+          }, 300);
+        }
+        
+        // NOTE: Do NOT call checkAuth() multiple times - useEffect will handle state propagation
+        // This prevents infinite loops and extra re-renders
         
         // If came from checkout, redirect back
         const from = searchParams.get('from');
@@ -241,18 +316,43 @@ export default function LuxuryDashboard() {
     setIsSavingProfile(true);
 
     try {
+      // Don't allow changing phone if it's verified
+      const updateData = {
+        name: profile.name,
+      };
+      
+      // Only include phone if it's not verified (user can't change verified phone)
+      if (!user?.phoneVerified) {
+        updateData.phone = profile.phone;
+      }
+
       const response = await apiRequest('/users/me', {
         method: 'PUT',
-        body: JSON.stringify({
-          name: profile.name,
-          phone: profile.phone,
-        }),
+        body: JSON.stringify(updateData),
       });
 
       if (response && response.success) {
+        // Debug: Log response verification status
+        const responseVerified = response.data?.user?.phoneVerified === true || response.data?.user?.isPhoneVerified === true;
+        console.log('[Dashboard] Profile save response - phoneVerified:', response.data?.user?.phoneVerified, 'isPhoneVerified:', response.data?.user?.isPhoneVerified);
+        
         toast.success('Profile updated successfully!');
-        // Refresh user data in AuthContext
-        await checkAuth();
+        
+        // CRITICAL: Refresh auth context ONCE to get latest backend state
+        // This ensures UI uses backend as single source of truth
+        // Only call checkAuth() once here - useEffect will handle state updates
+        const updatedUser = await checkAuth();
+        
+        // Debug: Log auth context after refresh (temporary)
+        console.log('[Dashboard] After profile save checkAuth - returned user.phoneVerified:', updatedUser?.phoneVerified, 'context user.phoneVerified:', user?.phoneVerified);
+        
+        // Update phone input if phone changed (from response, not from context to avoid stale state)
+        if (response.data?.user?.phone) {
+          setPhoneInput(response.data.user.phone);
+        }
+        
+        // NOTE: Do NOT call checkAuth() again here - useEffect will handle state propagation
+        // This prevents infinite loops and extra re-renders
       } else {
         throw new Error(response?.message || 'Failed to update profile');
       }
@@ -373,8 +473,8 @@ export default function LuxuryDashboard() {
       console.log('📝 Form data:', addressForm);
       console.log('📨 Sending address data:', JSON.stringify(addressData, null, 2));
       console.log('🔗 Endpoint:', editingAddress ? `PUT /users/me/addresses/${editingAddress}` : 'POST /users/me/addresses');
-      console.log('🔑 Auth token present:', !!localStorage.getItem('token'));
-      console.log('🔑 Auth token value:', localStorage.getItem('token') ? '***' + localStorage.getItem('token').slice(-10) : 'none');
+      // Auth token is stored in httpOnly cookie, not localStorage
+      console.log('🔑 Auth: Using httpOnly cookie (not localStorage)');
       
       let response;
       if (editingAddress) {
@@ -752,52 +852,60 @@ export default function LuxuryDashboard() {
                 </div>
 
                 {/* Phone Verification Card */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                  <div className={`px-8 py-6 ${phoneVerified ? 'bg-gradient-to-r from-green-600 to-green-500' : 'bg-gradient-to-r from-blue-600 to-blue-500'}`}>
-                    <div className="flex items-center gap-3 mb-2">
-                      <Phone className="w-5 h-5 text-white" />
-                      <h2 className="text-2xl font-light text-white">Phone Verification</h2>
-                      {phoneVerified && <CheckCircle className="w-5 h-5 text-white" />}
-                    </div>
-                    <p className="text-white/80 text-sm">
-                      {phoneVerified 
-                        ? 'Your phone number is verified and locked to your account'
-                        : 'Verify your phone number to place orders'
-                      }
-                    </p>
-                  </div>
-
-                  <div className="p-8">
-                    {phoneVerified ? (
-                      /* Verified Phone Display */
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-6">
-                        <div className="flex items-center gap-4">
-                          <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center">
-                            <Lock className="w-7 h-7 text-green-600" />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-lg font-semibold text-gray-900">+91 {user?.phone}</span>
-                              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full">
-                                Verified
-                              </span>
-                            </div>
-                            <p className="text-sm text-gray-600">
-                              This number is permanently linked to your account
-                            </p>
-                            {user?.phoneVerifiedAt && (
-                              <p className="text-xs text-gray-500 mt-1">
-                                Verified on {new Date(user.phoneVerifiedAt).toLocaleDateString('en-IN', { 
-                                  day: 'numeric', 
-                                  month: 'long', 
-                                  year: 'numeric' 
-                                })}
-                              </p>
-                            )}
-                          </div>
+                {(() => {
+                  // SINGLE SOURCE OF TRUTH: Use ONLY user?.phoneVerified from auth context
+                  // NO local state, NO cached values, NO localStorage
+                  const verified = user?.phoneVerified === true || user?.isPhoneVerified === true;
+                  
+                  return (
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                      <div className={`px-8 py-6 ${verified ? 'bg-gradient-to-r from-green-600 to-green-500' : 'bg-gradient-to-r from-blue-600 to-blue-500'}`}>
+                        <div className="flex items-center gap-3 mb-2">
+                          <Phone className="w-5 h-5 text-white" />
+                          <h2 className="text-2xl font-light text-white">Phone Verification</h2>
+                          {verified && <CheckCircle className="w-5 h-5 text-white" />}
                         </div>
+                        <p className="text-white/80 text-sm">
+                          {verified
+                            ? 'Your phone number is verified and locked to your account'
+                            : 'Verify your phone number to place orders'
+                          }
+                        </p>
                       </div>
-                    ) : (
+
+                      <div className="p-8">
+                        {verified ? (
+                          /* Verified Phone Display - PERMANENT, NO CHANGE OPTION */
+                          <div className="space-y-4">
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-6">
+                              <div className="flex items-center gap-4">
+                                <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center">
+                                  <Lock className="w-7 h-7 text-green-600" />
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-lg font-semibold text-gray-900">+91 {user?.phone ? `******${user.phone.slice(-4)}` : ''}</span>
+                                    <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full">
+                                      ✅ Phone number verified
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-gray-600">
+                                    This phone number is permanently linked to your account and cannot be changed.
+                                  </p>
+                                  {user?.phoneVerifiedAt && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                      Verified on {new Date(user.phoneVerifiedAt).toLocaleDateString('en-IN', { 
+                                        day: 'numeric', 
+                                        month: 'long', 
+                                        year: 'numeric' 
+                                      })}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
                       /* Phone Verification Form */
                       <div className="space-y-6">
                         {/* Warning Banner */}
@@ -819,26 +927,48 @@ export default function LuxuryDashboard() {
                               <label className="block text-sm font-medium text-gray-700 mb-2">
                                 Mobile Number
                               </label>
-                              <div className="flex gap-3">
-                                <div className="flex items-center px-4 py-3 bg-gray-100 border border-gray-200 rounded-lg text-gray-700 font-medium">
-                                  +91
+                              {/* CRITICAL: Hide phone input entirely when verified (not just disabled) */}
+                              {verified ? (
+                                <div className="flex gap-3">
+                                  <div className="flex items-center px-4 py-3 bg-gray-100 border border-gray-200 rounded-lg text-gray-700 font-medium">
+                                    +91
+                                  </div>
+                                  <div className="flex-1 px-4 py-3 border border-green-200 bg-green-50 rounded-lg text-gray-700">
+                                    {user?.phone ? `******${user.phone.slice(-4)}` : ''}
+                                  </div>
                                 </div>
-                                <input
-                                  type="tel"
-                                  value={phoneInput}
-                                  onChange={(e) => setPhoneInput(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                                  placeholder="Enter 10-digit mobile number"
-                                  maxLength={10}
-                                  className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all duration-300"
-                                />
-                              </div>
-                              <p className="text-xs text-gray-500 mt-2">
-                                We'll send a 6-digit OTP to verify this number
-                              </p>
+                              ) : (
+                                <div className="flex gap-3">
+                                  <div className="flex items-center px-4 py-3 bg-gray-100 border border-gray-200 rounded-lg text-gray-700 font-medium">
+                                    +91
+                                  </div>
+                                  <input
+                                    type="tel"
+                                    value={phoneInput}
+                                    onChange={(e) => {
+                                      // Only allow changes if NOT verified
+                                      setPhoneInput(e.target.value.replace(/\D/g, '').slice(0, 10));
+                                    }}
+                                    placeholder="Enter 10-digit mobile number"
+                                    maxLength={10}
+                                    className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 transition-all duration-300"
+                                  />
+                                </div>
+                              )}
+                              {verified ? (
+                                <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
+                                  <Lock className="w-3 h-3" />
+                                  Phone number is verified and permanently locked.
+                                </p>
+                              ) : (
+                                <p className="text-xs text-gray-500 mt-2">
+                                  We'll send a 6-digit OTP to verify this number
+                                </p>
+                              )}
                             </div>
                             <button
                               onClick={handleSendOtp}
-                              disabled={isSendingOtp || phoneInput.length !== 10}
+                              disabled={isSendingOtp || phoneInput.length !== 10 || verified}
                               className="w-full py-4 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-lg hover:shadow-xl hover:shadow-blue-500/30 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               {isSendingOtp ? (
@@ -923,8 +1053,10 @@ export default function LuxuryDashboard() {
                         )}
                       </div>
                     )}
-                  </div>
-                </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 

@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link, useLocation, useParams } from 'react-router-dom';
-import { CheckCircle2, Circle, Package, MapPin, FileText, X, Download, Search, Eye, Calendar, Clock, Truck, XCircle, CreditCard, Wallet, ArrowLeft, Star, Loader2 } from 'lucide-react';
+import { CheckCircle2, Circle, Package, MapPin, FileText, X, Download, Search, Eye, Calendar, Clock, Truck, XCircle, CreditCard, Wallet, ArrowLeft, Star, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { apiRequest } from '../utils/api';
 import jsPDF from 'jspdf';
+import { toast } from 'react-hot-toast';
 
 export default function TrackOrder() {
   const navigate = useNavigate();
@@ -22,6 +23,12 @@ export default function TrackOrder() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [reviewSuccess, setReviewSuccess] = useState(null);
   const [reviewError, setReviewError] = useState(null);
+  
+  // Payment status state
+  const [paymentStatus, setPaymentStatus] = useState(null);
+  const [paymentPolling, setPaymentPolling] = useState(false);
+  const [paymentStartTime, setPaymentStartTime] = useState(null);
+  const paymentPollIntervalRef = useRef(null);
 
   // Load all orders on mount
   useEffect(() => {
@@ -41,13 +48,20 @@ export default function TrackOrder() {
           const validOrdersArray = Array.isArray(ordersArray) ? ordersArray : [];
           
           // Transform backend orders to frontend format
-          const transformedOrders = validOrdersArray.map(order => ({
+          const transformedOrders = validOrdersArray.map(order => {
+            const deliveryStatus = order.deliveryStatus || order.orderStatus || 'Pending';
+            // If payment is successful and status is Processing, show as Confirmed
+            const displayStatus = ((order.paymentStatus === 'SUCCESS' || order.paymentStatus === 'Paid') && deliveryStatus === 'Processing') 
+              ? 'Confirmed' 
+              : deliveryStatus;
+            
+            return {
             orderId: order._id,
             backendOrderId: order._id,
             orderNumber: order.orderNumber || `OZME-${order._id.toString().slice(-8).toUpperCase()}`,
             orderDate: order.createdAt,
-            status: order.deliveryStatus || order.orderStatus || 'Pending', // Use deliveryStatus as primary
-            deliveryStatus: order.deliveryStatus || order.orderStatus || 'Pending',
+            status: displayStatus,
+            deliveryStatus: deliveryStatus,
             trackingNumber: order.trackingNumber,
             courierName: order.courierName,
             shippedAt: order.shippedAt,
@@ -59,7 +73,7 @@ export default function TrackOrder() {
               image: item.product?.images?.[0] || item.product?.image || '',
               price: item.price,
               quantity: item.quantity,
-              size: item.size || '100ml',
+              size: item.size || '120ml',
               category: item.product?.category || 'Perfume',
             })) || [],
             shippingAddress: order.shippingAddress ? {
@@ -74,24 +88,31 @@ export default function TrackOrder() {
             } : {},
             paymentMethod: order.paymentMethod === 'Prepaid' ? 'ONLINE' : 'COD',
             paymentStatus: order.paymentStatus,
+            paymentMethodType: order.paymentMethodType || null,
             subtotal: order.subtotal || (order.totalAmount + (order.discountAmount || 0)),
             shippingCost: order.shippingCost || 0,
             totalAmount: order.totalAmount,
             discountAmount: order.discountAmount || 0,
             promoCode: order.promoCode,
-          }));
+          };
+          });
           
           setOrders(transformedOrders);
           
-          // Also save to localStorage as backup
-          localStorage.setItem('allOrders', JSON.stringify(transformedOrders));
+          // Save to localStorage as backup (or clear if empty)
+          if (validOrdersArray.length === 0) {
+            // Clear localStorage if backend returns no orders
+            localStorage.removeItem('allOrders');
+          } else {
+            localStorage.setItem('allOrders', JSON.stringify(transformedOrders));
+          }
           
           // Check if we need to show a specific order
           // Priority: orderId (MongoDB ObjectId) > order_id > id > other
           const urlParams = new URLSearchParams(location.search);
           const orderIdentifier = identifier || 
                                   urlParams.get('orderId') || // Primary: MongoDB ObjectId from CheckoutSuccess
-                                  urlParams.get('order_id') || // PhonePe redirect uses order_id
+                                  urlParams.get('order_id') || // Cashfree redirect uses order_id
                                   urlParams.get('id') ||
                                   location.state?.orderId || 
                                   location.state?.trackingNumber;
@@ -108,7 +129,7 @@ export default function TrackOrder() {
             setOrderData(null);
           } else if (orderIdentifier) {
             // Prioritize MongoDB ObjectId matching (backendOrderId or orderId)
-            // This ensures PhonePe redirects with MongoDB _id work correctly
+            // This ensures Cashfree redirects with MongoDB _id work correctly
             const foundOrder = transformedOrders.find(o => {
               // Exact match on MongoDB ObjectId (most reliable)
               if (isValidMongoObjectId(orderIdentifier)) {
@@ -132,13 +153,19 @@ export default function TrackOrder() {
                 const orderResponse = await apiRequest(`/orders/track/${orderIdentifier}`);
                 if (orderResponse && orderResponse.success && orderResponse.data.order) {
                   const backendOrder = orderResponse.data.order;
+                  const deliveryStatus = backendOrder.deliveryStatus || backendOrder.orderStatus || 'Pending';
+                  // If payment is successful and status is Processing, show as Confirmed
+                  const displayStatus = ((backendOrder.paymentStatus === 'SUCCESS' || backendOrder.paymentStatus === 'Paid') && deliveryStatus === 'Processing') 
+                    ? 'Confirmed' 
+                    : deliveryStatus;
+                  
                   const transformedOrder = {
                     orderId: backendOrder._id,
                     backendOrderId: backendOrder._id,
                     orderNumber: backendOrder.orderNumber || `OZME-${backendOrder._id.toString().slice(-8).toUpperCase()}`,
                     orderDate: backendOrder.createdAt,
-                    status: backendOrder.deliveryStatus || backendOrder.orderStatus || 'Pending',
-                    deliveryStatus: backendOrder.deliveryStatus || backendOrder.orderStatus || 'Pending',
+                    status: displayStatus,
+                    deliveryStatus: deliveryStatus,
                     trackingNumber: backendOrder.trackingNumber,
                     courierName: backendOrder.courierName,
                     shippedAt: backendOrder.shippedAt,
@@ -150,7 +177,7 @@ export default function TrackOrder() {
                       image: item.product?.images?.[0] || item.product?.image || '',
                       price: item.price,
                       quantity: item.quantity,
-                      size: item.size || '100ml',
+                      size: item.size || '120ml',
                       category: item.product?.category || 'Perfume',
                     })) || [],
                     shippingAddress: {
@@ -165,6 +192,7 @@ export default function TrackOrder() {
                     },
                     paymentMethod: backendOrder.paymentMethod === 'Prepaid' ? 'ONLINE' : 'COD',
                     paymentStatus: backendOrder.paymentStatus,
+                    paymentMethodType: backendOrder.paymentMethodType || null,
                     subtotal: backendOrder.subtotal || (backendOrder.totalAmount + (backendOrder.discountAmount || 0)),
                     shippingCost: backendOrder.shippingCost || 0,
                     totalAmount: backendOrder.totalAmount,
@@ -181,26 +209,16 @@ export default function TrackOrder() {
             }
           }
         } else {
-          // Backend unavailable or no orders, try localStorage
-          try {
-            const localOrders = JSON.parse(localStorage.getItem('allOrders') || '[]');
-            setOrders(localOrders);
-          } catch (localError) {
-            console.error('Error loading orders from localStorage:', localError);
-            setOrders([]);
-          }
+        // Backend unavailable or no orders, clear localStorage and show empty
+        localStorage.removeItem('allOrders');
+        setOrders([]);
         }
       } catch (err) {
         console.error('Error fetching orders:', err);
-        // Fallback to localStorage
-        try {
-          const localOrders = JSON.parse(localStorage.getItem('allOrders') || '[]');
-          setOrders(localOrders);
-        } catch (localError) {
-          console.error('Error loading orders from localStorage:', localError);
-          setError('Failed to load orders');
-          setOrders([]);
-        }
+        // Error occurred, clear localStorage and show empty
+        localStorage.removeItem('allOrders');
+        setError('Failed to load orders');
+        setOrders([]);
       } finally {
         setLoading(false);
       }
@@ -208,6 +226,234 @@ export default function TrackOrder() {
 
     loadAllOrders();
   }, [location.pathname, location.search, location.state, identifier]);
+
+  // Payment status polling effect - aligned with backend throttle (30s)
+  useEffect(() => {
+    if (!orderData || orderData.paymentMethod !== 'ONLINE') return;
+
+    const orderId = orderData.backendOrderId || orderData.orderId;
+    if (!orderId) return;
+
+    const fetchPaymentStatus = async (orderId) => {
+      try {
+        const response = await apiRequest(`/orders/${orderId}/payment-status`);
+        if (response && response.success) {
+          const status = response.data;
+          setPaymentStatus(status);
+
+          // Stop polling if payment is confirmed or failed
+          if (status.paymentStatus === 'SUCCESS' || status.paymentStatus === 'FAILED') {
+            if (paymentPollIntervalRef.current) {
+              clearInterval(paymentPollIntervalRef.current);
+              paymentPollIntervalRef.current = null;
+            }
+            setPaymentPolling(false);
+            
+            // Refresh order data if payment succeeded (without page reload)
+            if (status.paymentStatus === 'SUCCESS') {
+              // Fetch updated order data without reloading the page
+              const currentOrderId = orderData.backendOrderId || orderData.orderId;
+              if (currentOrderId) {
+                try {
+                  const orderResponse = await apiRequest(`/orders/track/${currentOrderId}`);
+                  if (orderResponse && orderResponse.success && orderResponse.data.order) {
+                    const backendOrder = orderResponse.data.order;
+                    const deliveryStatus = backendOrder.deliveryStatus || backendOrder.orderStatus || 'Pending';
+                    // If payment is successful and status is Processing, show as Confirmed
+                    const displayStatus = (backendOrder.paymentStatus === 'SUCCESS' && deliveryStatus === 'Processing') 
+                      ? 'Confirmed' 
+                      : deliveryStatus;
+                    
+                    const transformedOrder = {
+                      orderId: backendOrder._id,
+                      backendOrderId: backendOrder._id,
+                      orderNumber: backendOrder.orderNumber || `OZME-${backendOrder._id.toString().slice(-8).toUpperCase()}`,
+                      orderDate: backendOrder.createdAt,
+                      status: displayStatus,
+                      deliveryStatus: deliveryStatus,
+                      trackingNumber: backendOrder.trackingNumber,
+                      courierName: backendOrder.courierName,
+                      shippedAt: backendOrder.shippedAt,
+                      outForDeliveryAt: backendOrder.outForDeliveryAt,
+                      deliveredAt: backendOrder.deliveredAt,
+                      items: backendOrder.items?.map(item => ({
+                        id: item.product?._id || item.product,
+                        name: item.product?.name || 'Product',
+                        image: item.product?.images?.[0] || item.product?.image || '',
+                        price: item.price,
+                        quantity: item.quantity,
+                        size: item.size || '120ml',
+                        category: item.product?.category || 'Perfume',
+                      })) || [],
+                      shippingAddress: {
+                        firstName: backendOrder.shippingAddress?.name?.split(' ')[0] || '',
+                        lastName: backendOrder.shippingAddress?.name?.split(' ').slice(1).join(' ') || '',
+                        email: backendOrder.user?.email || '',
+                        phone: backendOrder.shippingAddress?.phone || '',
+                        address: backendOrder.shippingAddress?.address || '',
+                        city: backendOrder.shippingAddress?.city || '',
+                        state: backendOrder.shippingAddress?.state || '',
+                        pincode: backendOrder.shippingAddress?.pincode || '',
+                      },
+                      paymentMethod: backendOrder.paymentMethod === 'Prepaid' ? 'ONLINE' : 'COD',
+                      paymentStatus: backendOrder.paymentStatus,
+                      paymentMethodType: backendOrder.paymentMethodType || null,
+                      subtotal: backendOrder.subtotal || (backendOrder.totalAmount + (backendOrder.discountAmount || 0)),
+                      shippingCost: backendOrder.shippingCost || 0,
+                      totalAmount: backendOrder.totalAmount,
+                      discountAmount: backendOrder.discountAmount || 0,
+                      promoCode: backendOrder.promoCode,
+                    };
+                    setOrderData(transformedOrder);
+                  }
+                } catch (err) {
+                  console.error('Error refreshing order data:', err);
+                }
+              }
+            }
+          } else if (status.paymentStatus === 'PENDING' && status.remainingMinutes === null) {
+            // Backend says payment timed out (>20 min), stop polling
+            if (paymentPollIntervalRef.current) {
+              clearInterval(paymentPollIntervalRef.current);
+              paymentPollIntervalRef.current = null;
+            }
+            setPaymentPolling(false);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching payment status:', error);
+      }
+    };
+
+    const scheduleNextPoll = (nextCheckAt) => {
+      if (paymentPollIntervalRef.current) {
+        clearInterval(paymentPollIntervalRef.current);
+        paymentPollIntervalRef.current = null;
+      }
+
+      if (!nextCheckAt) {
+        // No nextCheckAt provided, use default 30s interval (aligned with backend throttle)
+        paymentPollIntervalRef.current = setInterval(() => {
+          fetchPaymentStatus(orderId);
+        }, 30000); // 30 seconds - aligned with backend throttle
+        return;
+      }
+
+      const nextCheckTime = new Date(nextCheckAt).getTime();
+      const now = Date.now();
+      const delay = Math.max(0, nextCheckTime - now);
+
+      // Schedule next poll at backend's recommended time
+      paymentPollIntervalRef.current = setTimeout(() => {
+        fetchPaymentStatus(orderId);
+        // After first poll, continue with 30s interval
+        paymentPollIntervalRef.current = setInterval(() => {
+          fetchPaymentStatus(orderId);
+        }, 30000);
+      }, delay);
+    };
+
+    const startPaymentPolling = async () => {
+      if (!paymentStartTime) {
+        setPaymentStartTime(Date.now());
+      }
+      setPaymentPolling(true);
+
+      // Initial fetch
+      await fetchPaymentStatus(orderId);
+
+      // Get nextCheckAt from response and schedule accordingly
+      const response = await apiRequest(`/orders/${orderId}/payment-status`);
+      if (response && response.success && response.data.nextCheckAt) {
+        scheduleNextPoll(response.data.nextCheckAt);
+      } else {
+        // Fallback: use 30s interval
+        scheduleNextPoll(null);
+      }
+    };
+
+    startPaymentPolling();
+
+    // Cleanup on unmount
+    return () => {
+      if (paymentPollIntervalRef.current) {
+        clearInterval(paymentPollIntervalRef.current);
+        clearTimeout(paymentPollIntervalRef.current);
+        paymentPollIntervalRef.current = null;
+      }
+    };
+  }, [orderData?.backendOrderId, orderData?.orderId, orderData?.paymentMethod]);
+
+  // Fetch payment status handler
+  const handleRefreshPaymentStatus = async () => {
+    const orderId = orderData?.backendOrderId || orderData?.orderId;
+    if (!orderId) return;
+
+    try {
+      const response = await apiRequest(`/orders/${orderId}/payment-status`);
+      if (response && response.success) {
+        setPaymentStatus(response.data);
+        toast.success('Payment status refreshed');
+      }
+    } catch (error) {
+      console.error('Error refreshing payment status:', error);
+      toast.error('Failed to refresh payment status');
+    }
+  };
+
+  // Retry payment handler
+  const handleRetryPayment = async () => {
+    const orderId = orderData?.backendOrderId || orderData?.orderId;
+    if (!orderId) return;
+
+    try {
+      toast.loading('Creating new payment session...', { id: 'retry-payment' });
+      
+      // Use new retry payment endpoint
+      const response = await apiRequest(`/orders/${orderId}/retry-payment`, {
+        method: 'POST',
+      });
+
+      if (response && response.success && response.data.paymentSessionId) {
+        toast.success('Payment session created. Redirecting to payment...', { id: 'retry-payment' });
+        
+        // Open Cashfree checkout using payment link or session ID
+        if (response.data.paymentLink) {
+          // If payment link is provided, redirect directly
+          window.location.href = response.data.paymentLink;
+        } else if (response.data.paymentSessionId) {
+          // Use Cashfree SDK if available
+          if (window.Cashfree) {
+            const cashfree = window.Cashfree({ mode: 'production' });
+            cashfree.checkout({
+              paymentSessionId: response.data.paymentSessionId,
+              redirectTarget: '_self',
+            });
+          } else {
+            // Load Cashfree SDK if not available
+            const script = document.createElement('script');
+            script.src = 'https://sdk.cashfree.com/js/v3/cashfree.js';
+            script.async = true;
+            script.onload = () => {
+              const cashfree = window.Cashfree({ mode: 'production' });
+              cashfree.checkout({
+                paymentSessionId: response.data.paymentSessionId,
+                redirectTarget: '_self',
+              });
+            };
+            document.head.appendChild(script);
+          }
+        } else {
+          toast.error('No payment link available. Please contact support.', { id: 'retry-payment' });
+        }
+      } else {
+        toast.error(response?.message || 'Failed to create payment session. Please try again.', { id: 'retry-payment' });
+      }
+    } catch (error) {
+      console.error('Error retrying payment:', error);
+      toast.error(error.message || 'Failed to retry payment. Please try again.', { id: 'retry-payment' });
+    }
+  };
 
   // Filter orders by search term (tracking number, order ID, order number)
   const filteredOrders = orders.filter(order => {
@@ -369,6 +615,11 @@ export default function TrackOrder() {
           color: 'text-amber-600 bg-amber-50 border-amber-200',
           icon: <Clock className="w-4 h-4" />,
         };
+      case 'confirmed':
+        return {
+          color: 'text-green-600 bg-green-50 border-green-200',
+          icon: <CheckCircle2 className="w-4 h-4" />,
+        };
       case 'cancelled':
         return {
           color: 'text-red-600 bg-red-50 border-red-200',
@@ -403,9 +654,36 @@ export default function TrackOrder() {
     };
   };
 
-  // Handle Invoice Download
-  const handleInvoiceDownload = () => {
+  // Handle Invoice Download (only allowed for DELIVERED orders - server-side gated)
+  const handleInvoiceDownload = async () => {
     if (!orderData) return;
+    
+    // Frontend check (UX) - server will also enforce
+    const isDelivered = orderData.deliveryStatus === 'Delivered' || orderData.status === 'Delivered';
+    if (!isDelivered) {
+      toast.error('Invoice is only available after your order is delivered.');
+      return;
+    }
+
+    // Try to fetch from backend endpoint (server-side gated)
+    const orderId = orderData.backendOrderId || orderData.orderId;
+    try {
+      const response = await apiRequest(`/orders/${orderId}/invoice`);
+      if (response && response.success) {
+        // Backend confirmed order is delivered, proceed with client-side PDF generation
+        // (Server-side PDF generation can be added later)
+      } else {
+        toast.error(response?.message || 'Failed to generate invoice. Please try again.');
+        return;
+      }
+    } catch (error) {
+      if (error.response?.status === 403) {
+        toast.error('Invoice is only available after your order is delivered.');
+        return;
+      }
+      console.error('Error fetching invoice:', error);
+      // Continue with client-side generation if backend endpoint fails
+    }
 
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -620,7 +898,7 @@ export default function TrackOrder() {
           <div className="mb-8">
             <div className="flex items-center gap-3 mb-2">
               <Package className="w-8 h-8 text-amber-600" />
-              <h1 className="text-3xl sm:text-4xl font-semibold text-gray-900">My Orders</h1>
+              <h1 className="text-3xl sm:text-4xl font-semibold text-gray-900">Your Orders</h1>
             </div>
             <p className="text-gray-600">View and track all your orders</p>
           </div>
@@ -631,7 +909,7 @@ export default function TrackOrder() {
               <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
               <input
                 type="text"
-                placeholder="Search by tracking number, order ID, or order number..."
+                placeholder="Search by order ID, order number, or tracking number..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
@@ -1035,6 +1313,18 @@ export default function TrackOrder() {
           <span className="font-semibold">Back to Orders</span>
         </button>
 
+        {/* Payment Confirmation Banner */}
+        {orderData.paymentMethod === 'ONLINE' && (
+          <PaymentConfirmationBanner 
+            orderId={orderData.backendOrderId || orderData.orderId}
+            paymentStatus={paymentStatus}
+            paymentPolling={paymentPolling}
+            paymentStartTime={paymentStartTime}
+            onRetryPayment={handleRetryPayment}
+            onRefreshStatus={handleRefreshPaymentStatus}
+          />
+        )}
+
         {/* Top Section */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6 mb-8">
           <div className="flex-1">
@@ -1186,15 +1476,7 @@ export default function TrackOrder() {
         </div>
 
         {/* Information Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white border border-gray-200 rounded-lg p-6">
-            <h3 className="text-base font-semibold text-gray-900 mb-4">Delivery Info</h3>
-            <div className="flex items-center gap-2 text-blue-600 hover:text-blue-700 cursor-pointer">
-              <CheckCircle2 className="w-5 h-5" />
-              <span className="text-sm font-medium">Update delivery instructions</span>
-            </div>
-          </div>
-
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <div className="bg-white border border-gray-200 rounded-lg p-6">
             <h3 className="text-base font-semibold text-gray-900 mb-4">Shipping Address</h3>
             <div className="text-sm text-gray-700 space-y-1">
@@ -1221,7 +1503,7 @@ export default function TrackOrder() {
             <h3 className="text-base font-semibold text-gray-900 mb-4">Order Info</h3>
             <div className="space-y-3">
               <div className="text-sm text-gray-600">
-                <span className="font-medium">Status:</span> {orderData.deliveryStatus || orderData.status}
+                <span className="font-medium">Product Status:</span> {orderData.status || orderData.deliveryStatus || 'Pending'}
               </div>
               {(orderData.courierName || orderData.trackingNumber) && (
                 <div className="text-sm text-gray-600">
@@ -1232,7 +1514,11 @@ export default function TrackOrder() {
                 </div>
               )}
               <div className="text-sm text-gray-600">
-                <span className="font-medium">Payment:</span> {orderData.paymentMethod === 'COD' ? 'Cash on Delivery' : 'Online Payment'}
+                <span className="font-medium">Payment:</span> {
+                  orderData.paymentMethod === 'COD' 
+                    ? 'Cash on Delivery' 
+                    : (orderData.paymentMethodType || 'Online Payment')
+                }
               </div>
             </div>
           </div>
@@ -1242,13 +1528,24 @@ export default function TrackOrder() {
         <div className="bg-white border border-gray-200 rounded-lg p-6">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-gray-900">Order Details</h3>
-            <button
-              onClick={handleInvoiceDownload}
-              className="flex items-center gap-2 px-4 py-2 bg-black text-white text-sm font-semibold hover:bg-gray-900 transition-all duration-300 rounded-lg"
-            >
-              <Download className="w-4 h-4" />
-              Download Invoice
-            </button>
+            {(orderData.deliveryStatus === 'Delivered' || orderData.status === 'Delivered') ? (
+              <button
+                onClick={handleInvoiceDownload}
+                className="flex items-center gap-2 px-4 py-2 bg-black text-white text-sm font-semibold hover:bg-gray-900 transition-all duration-300 rounded-lg"
+              >
+                <Download className="w-4 h-4" />
+                Download Invoice
+              </button>
+            ) : (
+              <button
+                disabled
+                className="flex items-center gap-2 px-4 py-2 bg-gray-300 text-gray-500 text-sm font-semibold cursor-not-allowed rounded-lg"
+                title="Invoice available after delivery"
+              >
+                <Download className="w-4 h-4" />
+                Download Invoice
+              </button>
+            )}
           </div>
 
           <div className="space-y-4 mb-6">
@@ -1498,6 +1795,123 @@ export default function TrackOrder() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Payment Confirmation Banner Component
+function PaymentConfirmationBanner({ orderId, paymentStatus, paymentPolling, paymentStartTime, onRetryPayment, onRefreshStatus }) {
+  if (!paymentStatus) {
+    return (
+      <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="flex items-center gap-2 text-blue-700">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span className="font-medium">Checking payment status...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (paymentStatus.paymentStatus === 'SUCCESS') {
+    return (
+      <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <div className="flex items-center gap-2 text-green-700">
+          <CheckCircle2 className="w-5 h-5" />
+          <span className="font-medium">✅ Payment Successful - Order Confirmed</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (paymentStatus.paymentStatus === 'FAILED') {
+    const failureMessage = paymentStatus.failureReason === 'TIMEOUT_PENDING_OVER_20_MIN'
+      ? 'Payment confirmation timed out after 20 minutes. Please retry payment.'
+      : paymentStatus.failureReason === 'EXPIRED'
+      ? 'Payment session expired. Please retry payment.'
+      : paymentStatus.failureReason === 'CANCELLED'
+      ? 'Payment was cancelled. Please retry payment.'
+      : 'Your payment could not be processed. Please try again.';
+
+    return (
+      <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+        <div className="flex items-start gap-3">
+          <XCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-medium text-red-700 mb-2">❌ Payment Failed</div>
+            <p className="text-sm text-red-600 mb-3">
+              {failureMessage}
+            </p>
+            {paymentStatus.canRetryPayment && (
+              <button
+                onClick={onRetryPayment}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Retry Payment
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // PENDING status - use backend's remainingMinutes if available, otherwise calculate from start time
+  const remainingMinutes = paymentStatus.remainingMinutes !== null && paymentStatus.remainingMinutes !== undefined
+    ? paymentStatus.remainingMinutes
+    : (paymentStartTime ? Math.max(0, Math.ceil((20 * 60 * 1000 - (Date.now() - paymentStartTime)) / 60000)) : 20);
+  
+  const isTimeout = remainingMinutes === 0 || paymentStatus.timeElapsedMinutes >= 20;
+
+  return (
+    <div className={`mb-6 p-4 border rounded-lg ${isTimeout ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'}`}>
+      <div className="flex items-start gap-3">
+        {paymentPolling ? (
+          <Loader2 className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0 mt-0.5" />
+        ) : (
+          <Clock className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+        )}
+        <div className="flex-1">
+          <div className="font-medium text-blue-700 mb-2">
+            ⏳ Payment pending confirmation
+          </div>
+          {isTimeout ? (
+            <>
+              <p className="text-sm text-amber-700 mb-3">
+                Payment confirmation is taking longer than expected. This can take up to 20 minutes. If payment was already deducted, your order will auto-confirm once we receive confirmation.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={onRefreshStatus}
+                  className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 transition-colors"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Refresh Status
+                </button>
+                {paymentStatus.canRetryPayment && (
+                  <button
+                    onClick={onRetryPayment}
+                    className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors"
+                  >
+                    Retry Payment
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-blue-600 mb-2">
+                This can take up to 20 minutes. Checking again... ({remainingMinutes} {remainingMinutes === 1 ? 'minute' : 'minutes'} remaining)
+              </p>
+              <button
+                onClick={onRefreshStatus}
+                className="text-sm text-blue-600 hover:text-blue-700 underline"
+              >
+                Refresh now
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

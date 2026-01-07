@@ -62,6 +62,39 @@ const userSchema = new mongoose.Schema(
       enum: ['user', 'admin'],
       default: 'user',
     },
+    // Login audit tracking
+    lastLoginAt: {
+      type: Date,
+    },
+    lastLoginMethod: {
+      type: String,
+      enum: ['otp', 'google', 'email'],
+    },
+    lastLoginIdentifier: {
+      type: String, // Phone number for OTP, email for Google
+    },
+    lastLoginIp: {
+      type: String,
+    },
+    lastLoginUserAgent: {
+      type: String,
+    },
+    // Account linking and de-duplication
+    authProviders: {
+      type: [String],
+      enum: ['otp', 'google', 'email'],
+      default: [],
+    },
+    mergedIntoUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    accountStatus: {
+      type: String,
+      enum: ['active', 'merged'],
+      default: 'active',
+    },
     addresses: [
       {
         firstName: {
@@ -130,8 +163,33 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Hash password before saving (only if password exists and is modified)
+// Normalize phone number before saving (ensure consistent format for uniqueness)
 userSchema.pre('save', async function (next) {
+  // Normalize phone to 10-digit format if phone is being set/modified
+  if (this.isModified('phone') && this.phone) {
+    // Remove all non-digit characters
+    let cleanPhone = this.phone.replace(/\D/g, '');
+    
+    // Remove country code if present (91XXXXXXXXXX -> XXXXXXXXXX)
+    if (cleanPhone.startsWith('91') && cleanPhone.length === 12) {
+      cleanPhone = cleanPhone.slice(2);
+    } else if (cleanPhone.startsWith('91') && cleanPhone.length > 12) {
+      cleanPhone = cleanPhone.slice(-10);
+    } else {
+      cleanPhone = cleanPhone.slice(-10);
+    }
+    
+    // Validate: Must be exactly 10 digits starting with 6-9
+    if (cleanPhone && /^[6-9]\d{9}$/.test(cleanPhone)) {
+      this.phone = cleanPhone; // Store normalized format
+      console.log(`[User Model] Normalized phone before save: ${cleanPhone.slice(0, 2)}****${cleanPhone.slice(-4)}`);
+    } else if (cleanPhone) {
+      // Invalid format - let mongoose validation handle it
+      console.warn(`[User Model] Invalid phone format: ${cleanPhone}`);
+    }
+  }
+  
+  // Hash password before saving (only if password exists and is modified)
   if (!this.isModified('password') || !this.password) {
     return next();
   }

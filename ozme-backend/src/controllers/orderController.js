@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Order from '../models/Order.js';
 import CartItem from '../models/CartItem.js';
 import Product from '../models/Product.js';
@@ -18,7 +19,7 @@ const reduceOrderStock = async (orderItems) => {
       throw new Error(`Product with ID ${orderItem.product} not found`);
     }
 
-    const orderedSize = orderItem.size || '100ML';
+    const orderedSize = orderItem.size || '120ML';
     const orderedQuantity = orderItem.quantity || 1;
 
     // Check if product has sizes array
@@ -120,7 +121,7 @@ export const createOrder = async (req, res) => {
         orderItems.push({
           product: item.productId,
           quantity: item.quantity || 1,
-          size: item.size || '100ml',
+          size: item.size || '120ml',
           price: item.price || product.price, // Use provided price or product price
         });
 
@@ -202,7 +203,7 @@ export const createOrder = async (req, res) => {
           });
         }
 
-        const orderedSize = orderItem.size || '100ML';
+        const orderedSize = orderItem.size || '120ML';
         const orderedQuantity = orderItem.quantity || 1;
 
         // Check if product has sizes array
@@ -464,15 +465,24 @@ export const getUserOrders = async (req, res) => {
       });
     }
 
+    // Log database connection info (for debugging)
+    const db = mongoose.connection.db;
+    const dbName = db?.databaseName || 'unknown';
+    const dbHost = mongoose.connection.host || 'unknown';
+    console.log(`[getUserOrders] Querying DB: ${dbHost}/${dbName} for user: ${req.user.id} (${req.user.email})`);
+
     const orders = await Order.find({ user: req.user.id })
       .populate('items.product')
       .sort({ createdAt: -1 });
+
+    console.log(`[getUserOrders] Found ${orders.length} orders for user ${req.user.email}`);
 
     res.json({
       success: true,
       data: { orders },
     });
   } catch (error) {
+    console.error('[getUserOrders] Error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Server error',
@@ -484,6 +494,397 @@ export const getUserOrders = async (req, res) => {
  * Track order by tracking number or order ID
  * @route GET /api/orders/track/:identifier
  */
+/**
+ * Get payment status for an order (with Cashfree verification)
+ * @route GET /api/orders/:orderId/payment-status
+ */
+export const getOrderPaymentStatus = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order ID is required',
+      });
+    }
+
+    // Find order
+    const order = await Order.findById(orderId).populate('user');
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      });
+    }
+
+    // Check if user owns the order (if authenticated)
+    if (req.user && req.user.id !== order.user._id.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied',
+      });
+    }
+
+    // For COD orders, return current status
+    if (order.paymentMethod === 'COD') {
+      return res.json({
+        success: true,
+        data: {
+          orderId: order._id.toString(),
+          orderStatus: order.orderStatus,
+          paymentMethod: 'COD',
+          paymentStatus: 'PENDING', // COD is always pending until delivery
+          paymentProvider: null,
+          cashfreeOrderId: null,
+          lastVerifiedAt: null,
+          canRetryPayment: false,
+        },
+      });
+    }
+
+    // For online payments, verify with Cashfree if needed
+    let paymentStatus = order.paymentStatus || 'Pending';
+    let cashfreeOrderId = order.cashfreeOrderId;
+    let lastVerifiedAt = order.lastVerifiedAt;
+
+    // If payment is already confirmed, return immediately
+    if (paymentStatus === 'Paid') {
+      return res.json({
+        success: true,
+        data: {
+          orderId: order._id.toString(),
+          orderStatus: order.orderStatus,
+          paymentMethod: 'Online Payment',
+          paymentStatus: 'SUCCESS',
+          paymentProvider: order.paymentGateway || 'CASHFREE',
+          cashfreeOrderId: cashfreeOrderId,
+          lastVerifiedAt: lastVerifiedAt,
+          canRetryPayment: false,
+        },
+      });
+    }
+
+    // CRITICAL: Check for 20-minute timeout for PENDING payments
+    // Use lastPaymentAttemptAt (or paymentInitiatedAt as fallback) instead of order.createdAt
+    const now = new Date();
+    const paymentAttemptTime = order.lastPaymentAttemptAt || order.paymentInitiatedAt || order.createdAt;
+    const timeSinceAttempt = now - paymentAttemptTime;
+    const TWENTY_MINUTES_MS = 20 * 60 * 1000;
+
+    // If payment is PENDING and >20 minutes old since last attempt, mark as FAILED (timeout)
+    if (paymentStatus === 'Pending' && timeSinceAttempt > TWENTY_MINUTES_MS) {
+      // IDEMPOTENT: Only update if not already failed
+      if (order.paymentStatus !== 'Failed') {
+        console.log(`[getOrderPaymentStatus] Payment timeout: Order ${orderId} pending for ${Math.round(timeSinceAttempt / 60000)} minutes since last attempt, marking as FAILED`);
+        order.paymentStatus = 'Failed';
+        order.failureReason = 'TIMEOUT_PENDING_OVER_20_MIN';
+        
+        // Mark current pending attempt as failed
+        if (order.paymentAttempts && order.paymentAttempts.length > 0) {
+          const lastAttempt = order.paymentAttempts[order.paymentAttempts.length - 1];
+          if (lastAttempt.status === 'PENDING') {
+            lastAttempt.status = 'FAILED';
+            lastAttempt.completedAt = now;
+          }
+        }
+        
+        await order.save();
+        
+        return res.json({
+          success: true,
+          data: {
+            orderId: order._id.toString(),
+            orderStatus: order.orderStatus,
+            paymentMethod: 'Online Payment',
+            paymentStatus: 'FAILED',
+            paymentProvider: order.paymentGateway || 'CASHFREE',
+            cashfreeOrderId: cashfreeOrderId,
+            lastVerifiedAt: now,
+            failureReason: 'TIMEOUT_PENDING_OVER_20_MIN',
+            canRetryPayment: true,
+            timeElapsedMinutes: Math.round(timeSinceAttempt / 60000),
+            nextCheckAt: null, // No need to check again
+          },
+        });
+      }
+    }
+
+    // If we have a cashfreeOrderId and payment is still pending (and not timed out), verify with Cashfree
+    if (cashfreeOrderId && paymentStatus === 'Pending' && timeSinceAttempt <= TWENTY_MINUTES_MS) {
+      // Throttle verification: Don't call Cashfree more than once per 30 seconds
+      // Return nextCheckAt to frontend so it can align polling
+      const THROTTLE_MS = 30000; // 30 seconds
+      const shouldVerify = !lastVerifiedAt || (now - new Date(lastVerifiedAt)) > THROTTLE_MS;
+      const nextCheckAt = lastVerifiedAt 
+        ? new Date(new Date(lastVerifiedAt).getTime() + THROTTLE_MS)
+        : now;
+
+      if (shouldVerify) {
+        try {
+          const { verifyCashfreeOrderStatus } = await import('../utils/cashfree.js');
+          const cashfreeStatus = await verifyCashfreeOrderStatus(cashfreeOrderId);
+
+          // Map Cashfree status to our payment status
+          let newPaymentStatus = paymentStatus;
+          let newOrderStatus = order.orderStatus;
+          let failureReason = order.failureReason;
+
+          if (cashfreeStatus.orderStatus === 'PAID' || cashfreeStatus.paymentStatus === 'SUCCESS') {
+            // IDEMPOTENT: Only update if not already paid (prevent reverting successful payments)
+            if (order.paymentStatus !== 'Paid') {
+              newPaymentStatus = 'Paid';
+              if (order.orderStatus === 'Pending') {
+                newOrderStatus = 'Processing';
+              }
+              order.paidAt = new Date();
+              order.failureReason = null; // Clear failure reason on success
+            }
+          } else if (cashfreeStatus.orderStatus === 'EXPIRED' || cashfreeStatus.paymentStatus === 'FAILED' || cashfreeStatus.paymentStatus === 'CANCELLED') {
+            // IDEMPOTENT: Only update if not already failed (prevent overwriting timeout failures)
+            if (order.paymentStatus !== 'Failed') {
+              newPaymentStatus = 'Failed';
+              failureReason = cashfreeStatus.orderStatus === 'EXPIRED' ? 'EXPIRED' : 
+                            cashfreeStatus.paymentStatus === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
+              order.failureReason = failureReason;
+            }
+          }
+
+          // Update order if status changed
+          if (newPaymentStatus !== paymentStatus || newOrderStatus !== order.orderStatus) {
+            order.paymentStatus = newPaymentStatus;
+            order.orderStatus = newOrderStatus;
+            order.deliveryStatus = newOrderStatus; // Sync delivery status
+            order.lastVerifiedAt = now;
+            await order.save();
+
+            // If payment is confirmed, reduce stock
+            if (newPaymentStatus === 'Paid' && order.orderStatus === 'Processing') {
+              try {
+                await reduceOrderStock(order.items);
+              } catch (stockError) {
+                console.error('Error reducing stock after payment confirmation:', stockError);
+              }
+            }
+
+            paymentStatus = newPaymentStatus;
+            lastVerifiedAt = now;
+          } else {
+            // Update lastVerifiedAt even if status didn't change
+            order.lastVerifiedAt = now;
+            await order.save();
+            lastVerifiedAt = now;
+          }
+        } catch (verifyError) {
+          console.error('Error verifying Cashfree order status:', verifyError);
+          // Continue with current DB status if verification fails
+        }
+      }
+    }
+
+    // Map payment status to API format
+    const apiPaymentStatus = paymentStatus === 'Paid' ? 'SUCCESS' : 
+                            paymentStatus === 'Failed' ? 'FAILED' : 'PENDING';
+
+    // Calculate remaining time for pending payments (based on last attempt, not order creation)
+    const remainingMinutes = paymentStatus === 'Pending' && timeSinceAttempt < TWENTY_MINUTES_MS
+      ? Math.max(0, Math.ceil((TWENTY_MINUTES_MS - timeSinceAttempt) / 60000))
+      : null;
+
+    // Calculate nextCheckAt for frontend polling alignment
+    const THROTTLE_MS = 30000; // 30 seconds
+    const nextCheckAt = paymentStatus === 'Pending' && lastVerifiedAt
+      ? new Date(new Date(lastVerifiedAt).getTime() + THROTTLE_MS)
+      : null;
+
+    return res.json({
+      success: true,
+      data: {
+        orderId: order._id.toString(),
+        orderStatus: order.orderStatus,
+        paymentMethod: 'Online Payment',
+        paymentStatus: apiPaymentStatus,
+        paymentProvider: order.paymentGateway || 'CASHFREE',
+        cashfreeOrderId: cashfreeOrderId,
+        lastVerifiedAt: lastVerifiedAt,
+        failureReason: order.failureReason || null,
+        canRetryPayment: apiPaymentStatus === 'FAILED' || (apiPaymentStatus === 'PENDING' && timeSinceAttempt > TWENTY_MINUTES_MS),
+        remainingMinutes: remainingMinutes,
+        timeElapsedMinutes: Math.round(timeSinceAttempt / 60000),
+        nextCheckAt: nextCheckAt ? nextCheckAt.toISOString() : null, // Frontend should poll at this time
+        lastPaymentAttemptAt: order.lastPaymentAttemptAt ? order.lastPaymentAttemptAt.toISOString() : null,
+      },
+    });
+  } catch (error) {
+    console.error('Get order payment status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch payment status',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Retry payment for a failed/pending order
+ * @route POST /api/orders/:orderId/retry-payment
+ */
+export const retryOrderPayment = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order ID is required',
+      });
+    }
+
+    // Find order
+    const order = await Order.findById(orderId).populate('user');
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      });
+    }
+
+    // Check if user owns the order (must be authenticated)
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    if (req.user.id !== order.user._id.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied',
+      });
+    }
+
+    // Preconditions: Only allow retry when paymentStatus !== Paid and order not cancelled
+    if (order.paymentStatus === 'Paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment already successful. Cannot retry payment.',
+      });
+    }
+
+    if (order.orderStatus === 'Cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Order is cancelled. Cannot retry payment.',
+      });
+    }
+
+    // Only allow retry for online payments
+    if (order.paymentMethod !== 'Prepaid') {
+      return res.status(400).json({
+        success: false,
+        message: 'Retry payment is only available for online payments.',
+      });
+    }
+
+    // Prevent rapid retries: Check if last attempt was less than 10 seconds ago
+    const now = new Date();
+    if (order.lastPaymentAttemptAt) {
+      const timeSinceLastAttempt = now - order.lastPaymentAttemptAt;
+      if (timeSinceLastAttempt < 10000) { // 10 seconds
+        return res.status(429).json({
+          success: false,
+          message: 'Please wait a few seconds before retrying payment.',
+          retryAfter: Math.ceil((10000 - timeSinceLastAttempt) / 1000),
+        });
+      }
+    }
+
+    // Create new Cashfree payment session
+    const { createCashfreePaymentSession } = await import('../utils/cashfree.js');
+    
+    const customerDetails = {
+      name: order.shippingAddress?.name || order.user?.name || 'Customer',
+      email: order.shippingAddress?.email || order.user?.email || '',
+      phone: order.shippingAddress?.phone || order.user?.phone || '',
+      customerId: order.user?._id?.toString() || `customer_${orderId}`,
+    };
+
+    const orderMeta = {
+      returnUrl: `${process.env.CLIENT_URL || 'https://ozme.in'}/checkout/success?order_id={order_id}`,
+      notifyUrl: `${process.env.API_BASE_URL || 'https://www.ozme.in'}/api/payments/cashfree/webhook`,
+    };
+
+    // Generate unique attempt ID
+    const attemptId = `attempt_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    
+    console.log(`[retryOrderPayment] Creating new payment session for order ${orderId}, attemptId: ${attemptId}`);
+    const paymentSession = await createCashfreePaymentSession(
+      order.totalAmount,
+      `${orderId}_${attemptId}`, // Include attemptId in order_id for Cashfree
+      customerDetails,
+      orderMeta
+    );
+
+    // Mark old pending attempts as cancelled
+    if (order.paymentAttempts && order.paymentAttempts.length > 0) {
+      order.paymentAttempts.forEach(attempt => {
+        if (attempt.status === 'PENDING') {
+          attempt.status = 'CANCELLED';
+          attempt.completedAt = now;
+        }
+      });
+    }
+
+    // Create new payment attempt record
+    const newAttempt = {
+      attemptId: attemptId,
+      cashfreeOrderId: paymentSession.order_id,
+      paymentSessionId: paymentSession.payment_session_id,
+      initiatedAt: now,
+      status: 'PENDING',
+    };
+
+    if (!order.paymentAttempts) {
+      order.paymentAttempts = [];
+    }
+    order.paymentAttempts.push(newAttempt);
+
+    // Update order with new attempt info
+    order.cashfreeOrderId = paymentSession.order_id; // Current active order ID
+    order.paymentStatus = 'Pending'; // Reset to pending for new payment attempt
+    order.failureReason = null; // Clear previous failure reason
+    order.lastVerifiedAt = null; // Reset verification timestamp
+    order.lastPaymentAttemptAt = now; // Update last attempt timestamp
+    if (!order.paymentInitiatedAt) {
+      order.paymentInitiatedAt = now; // Set initial payment time if not set
+    }
+    
+    await order.save();
+
+    console.log(`[retryOrderPayment] New payment session created: ${paymentSession.payment_session_id}, attemptId: ${attemptId}`);
+
+    return res.json({
+      success: true,
+      message: 'New payment session created successfully',
+      data: {
+        attemptId: attemptId,
+        paymentSessionId: paymentSession.payment_session_id,
+        paymentLink: paymentSession.payment_link,
+        orderId: order._id.toString(),
+        cashfreeOrderId: paymentSession.order_id,
+        initiatedAt: now.toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Error retrying payment:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to create retry payment session',
+    });
+  }
+};
+
 export const trackOrder = async (req, res) => {
   try {
     const { identifier } = req.params;
@@ -549,3 +950,85 @@ export const trackOrder = async (req, res) => {
   }
 };
 
+
+/**
+ * Download invoice for an order (server-side gating)
+ * @route GET /api/orders/:orderId/invoice
+ */
+export const downloadInvoice = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order ID is required',
+      });
+    }
+
+    // Find order
+    const order = await Order.findById(orderId).populate('items.product user');
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      });
+    }
+
+    // Check if user owns the order (must be authenticated)
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    if (req.user.id !== order.user._id.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied',
+      });
+    }
+
+    // CRITICAL: Server-side gating - only allow invoice download for DELIVERED orders
+    if (order.orderStatus !== 'Delivered' && order.deliveryStatus !== 'Delivered') {
+      return res.status(403).json({
+        success: false,
+        message: 'Invoice is only available after your order is delivered.',
+        errorCode: 'INVOICE_NOT_AVAILABLE',
+        orderStatus: order.orderStatus,
+      });
+    }
+
+    // Generate invoice PDF (using same logic as frontend)
+    // For now, return order data and let frontend generate PDF
+    // TODO: Generate PDF server-side using pdfkit or similar
+    res.json({
+      success: true,
+      message: 'Invoice generation not yet implemented server-side. Use frontend download.',
+      data: {
+        order: {
+          id: order._id,
+          orderNumber: order.orderNumber,
+          orderDate: order.createdAt,
+          items: order.items,
+          shippingAddress: order.shippingAddress,
+          paymentMethod: order.paymentMethod,
+          paymentStatus: order.paymentStatus,
+          subtotal: order.subtotal,
+          shippingCost: order.shippingCost,
+          discountAmount: order.discountAmount,
+          totalAmount: order.totalAmount,
+          promoCode: order.promoCode,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Download invoice error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate invoice',
+      error: error.message,
+    });
+  }
+};

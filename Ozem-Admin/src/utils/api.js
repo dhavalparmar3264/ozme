@@ -4,7 +4,8 @@
  */
 
 // Get API base URL from environment, default to production URL
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://ozme.in/api';
+// CRITICAL: Use www.ozme.in (not ozme.in) to match backend domain
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://www.ozme.in/api';
 
 // Log API base URL on load (for debugging)
 if (import.meta.env.DEV) {

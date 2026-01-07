@@ -110,7 +110,7 @@ export const verifyPayment = async (req, res) => {
             continue;
           }
 
-          const orderedSize = orderItem.size || '100ML';
+          const orderedSize = orderItem.size || '120ML';
           const orderedQuantity = orderItem.quantity || 1;
 
           // Check if product has sizes array
@@ -257,8 +257,10 @@ export const createCashfreePayment = async (req, res) => {
             });
         }
 
-        // Verify order exists
-        const order = await Order.findById(orderId).populate('user');
+        // Verify order exists and populate products
+        const order = await Order.findById(orderId)
+            .populate('user')
+            .populate('items.product');
         if (!order) {
             console.error(`❌ Order not found: ${orderId}`);
             return res.status(404).json({
@@ -283,45 +285,212 @@ export const createCashfreePayment = async (req, res) => {
             phone: customerInfo.phone ? '***' : 'missing',
         });
 
-        // Check Cashfree configuration
-        const hasCashfreeConfig = process.env.CASHFREE_CLIENT_ID && process.env.CASHFREE_CLIENT_SECRET;
+        // Check Cashfree PROD configuration
+        const hasCashfreeConfig = process.env.CASHFREE_APP_ID && process.env.CASHFREE_SECRET_KEY;
         if (!hasCashfreeConfig) {
-            console.error('❌ Cashfree credentials not configured!');
-            console.error('   CASHFREE_CLIENT_ID:', process.env.CASHFREE_CLIENT_ID ? '✓ Set' : '✗ Missing');
-            console.error('   CASHFREE_CLIENT_SECRET:', process.env.CASHFREE_CLIENT_SECRET ? '✓ Set' : '✗ Missing');
+            console.error('❌ Cashfree PROD credentials not configured!');
+            console.error('   CASHFREE_APP_ID:', process.env.CASHFREE_APP_ID ? '✓ Set' : '✗ Missing');
+            console.error('   CASHFREE_SECRET_KEY:', process.env.CASHFREE_SECRET_KEY ? '✓ Set' : '✗ Missing');
             return res.status(500).json({
                 success: false,
                 message: 'Payment gateway not configured. Please contact support.',
-                error: 'Cashfree credentials missing',
+                error: 'Cashfree PROD credentials missing',
             });
         }
 
         console.log('🔄 Creating Cashfree payment session...');
         
+        // CRITICAL: Backend is the single source of truth for payable amount
+        // DO NOT trust client-provided amount - recompute from DB products
+        
+        // Recompute total from order items (using product prices from DB)
+        // CRITICAL: Backend is single source of truth - recompute from DB products
+        let computedTotalRupees = 0;
+        
+        // Order items are already populated from the query above
+        const orderItemsWithProducts = order.items || [];
+        
+        if (orderItemsWithProducts.length === 0) {
+            console.error('❌ Order has no items:', orderId);
+            return res.status(400).json({
+                success: false,
+                message: 'Order has no items',
+            });
+        }
+        
+        for (const orderItem of orderItemsWithProducts) {
+            const product = orderItem.product;
+            if (!product) {
+                console.error(`❌ Product not found for order item: ${orderItem.product}`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Product not found in order',
+                });
+            }
+            
+            // Get price from product (same field used on product page)
+            let itemPrice = 0;
+            const orderedSize = (orderItem.size || '120ML').toUpperCase();
+            
+            // Check if product has sizes array
+            if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+                const sizeObj = product.sizes.find(s => 
+                    s.size && s.size.toUpperCase() === orderedSize
+                );
+                if (sizeObj && sizeObj.price) {
+                    itemPrice = sizeObj.price; // Use size-specific price
+                } else {
+                    itemPrice = product.price; // Fallback to main price
+                }
+            } else {
+                itemPrice = product.price; // Use main product price
+            }
+            
+            const itemQuantity = orderItem.quantity || 1;
+            const itemTotal = itemPrice * itemQuantity;
+            computedTotalRupees += itemTotal;
+            
+            console.log('📦 Order item:', {
+                productName: product.name?.substring(0, 30) + '...',
+                size: orderedSize,
+                pricePerUnit: itemPrice,
+                quantity: itemQuantity,
+                itemTotal: itemTotal,
+            });
+        }
+        
+        // Apply discount from order (if any)
+        const discountAmount = order.discountAmount || 0;
+        computedTotalRupees = Math.max(0, computedTotalRupees - discountAmount);
+        
+        // Shipping cost (free shipping)
+        const shippingCost = 0;
+        const finalTotalRupees = computedTotalRupees + shippingCost;
+        
+        // CRITICAL VALIDATION: Hard safety guards before calling Cashfree
+        // Guard 1: Amount must be > 0
+        if (finalTotalRupees <= 0) {
+            console.error('❌ Invalid computed total:', finalTotalRupees);
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid order total',
+            });
+        }
+        
+        // Guard 2: Amount must be reasonable (₹1 - ₹10,000 for normal carts)
+        if (finalTotalRupees > 10000) {
+            console.error('❌ Amount suspiciously high:', {
+                amountRupees: finalTotalRupees,
+                expectedRange: '₹1 - ₹10,000',
+                orderId,
+            });
+            return res.status(400).json({
+                success: false,
+                message: 'Amount suspicious. Please contact support.',
+            });
+        }
+        
+        // Guard 3: Detect 100x mistakes (amount divisible by 100 and > 1000)
+        // Example: 79900 looks like paise sent as rupees (should be 799)
+        if (finalTotalRupees > 1000 && finalTotalRupees % 100 === 0 && Number.isInteger(finalTotalRupees)) {
+            const possibleCorrectAmount = finalTotalRupees / 100;
+            // If divided amount is reasonable (₹1 - ₹10,000), it's likely a 100x error
+            if (possibleCorrectAmount >= 1 && possibleCorrectAmount <= 10000) {
+                console.error('❌ Amount unit mismatch detected (likely paise sent as rupees):', {
+                    computedAmount: finalTotalRupees,
+                    possibleCorrectAmount: possibleCorrectAmount,
+                    orderId,
+                });
+                return res.status(500).json({
+                    success: false,
+                    message: 'Amount unit mismatch detected. Please contact support.',
+                    error: 'Amount unit mismatch',
+                });
+            }
+        }
+        
+        // Guard 4: Final validation - amount must be at least ₹1
+        if (finalTotalRupees < 1) {
+            console.error('❌ Amount too low:', {
+                amountRupees: finalTotalRupees,
+                orderId,
+            });
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid order amount',
+            });
+        }
+        
+        // Compare with frontend amount (for logging only - backend amount is authoritative)
+        const frontendAmountRupees = amount;
+        const amountDifference = Math.abs(finalTotalRupees - frontendAmountRupees);
+        if (amountDifference > 1) {
+            console.warn('⚠️  Frontend amount mismatch (using backend computed amount):', {
+                backendComputedAmount: finalTotalRupees,
+                frontendAmount: frontendAmountRupees,
+                difference: amountDifference,
+            });
+        }
+        
+        // Log amount computation (safe - no secrets)
+        console.log('💰 Cashfree amount computation:', {
+            orderId: orderId.toString().substring(0, 10) + '...',
+            computedTotalRupees: finalTotalRupees,
+            discountAmount: discountAmount,
+            shippingCost: shippingCost,
+            willBeSentToCashfree: finalTotalRupees, // Cashfree expects RUPEES, not paise
+        });
+        
+        // Generate unique attempt ID and Cashfree order_id (must be unique per order)
+        const now = new Date();
+        const attemptId = `attempt_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        const cashfreeOrderId = `OZME_${orderId.toString()}_${attemptId}`;
+        
         // Create Cashfree payment session
-        // Note: return_url uses {order_id} placeholder which Cashfree will replace with actual order_id
+        // CRITICAL: Pass amount in RUPEES - Cashfree Orders API expects RUPEES (NOT paise)
         const paymentSession = await createCashfreePaymentSession(
-            amount,
-            orderId,
+            finalTotalRupees, // Amount in RUPEES (e.g., 799 for ₹799)
+            cashfreeOrderId,
             customerInfo,
             {
-                returnUrl: `${process.env.CLIENT_URL || 'https://ozme.in'}/order-success?order_id={order_id}`,
-                notifyUrl: `${process.env.API_BASE_URL || process.env.CLIENT_URL || 'https://ozme.in'}/api/payments/cashfree/webhook`,
+                returnUrl: process.env.CASHFREE_RETURN_URL?.replace('{order_id}', orderId.toString()) || `${process.env.CLIENT_URL || 'https://ozme.in'}/checkout/success?order_id=${orderId}`,
+                notifyUrl: process.env.CASHFREE_CALLBACK_URL || `${process.env.API_BASE_URL || 'https://www.ozme.in'}/api/payments/cashfree/webhook`,
             }
         );
+        
+        // Create payment attempt record
+        const newAttempt = {
+            attemptId: attemptId,
+            cashfreeOrderId: paymentSession.order_id,
+            paymentSessionId: paymentSession.payment_session_id,
+            initiatedAt: now,
+            status: 'PENDING',
+        };
+
+        if (!order.paymentAttempts) {
+            order.paymentAttempts = [];
+        }
+        order.paymentAttempts.push(newAttempt);
+
+        // Store Cashfree order_id and payment timestamps
+        order.cashfreeOrderId = paymentSession.order_id;
+        order.paymentInitiatedAt = now;
+        order.lastPaymentAttemptAt = now;
+        await order.save();
 
         console.log('✅ Cashfree payment session created:', {
             payment_session_id: paymentSession.payment_session_id,
             order_id: paymentSession.order_id,
         });
 
+        // Return response with amount in rupees for frontend validation
         res.status(200).json({
             success: true,
             data: {
                 payment_session_id: paymentSession.payment_session_id,
                 order_id: paymentSession.order_id,
-                amount: paymentSession.order_amount,
-                currency: paymentSession.order_currency,
+                amountRupees: finalTotalRupees, // Amount in RUPEES (e.g., 799 for ₹799)
+                currency: paymentSession.order_currency || 'INR',
             },
         });
     } catch (error) {
@@ -355,136 +524,314 @@ export const createCashfreePayment = async (req, res) => {
 /**
  * @desc    Handle Cashfree webhook
  * @route   POST /api/payments/cashfree/webhook
- * @access  Public (webhook)
+ * @access  Public (webhook) - Authenticated via signature verification
+ * @note    Verifies signature before processing, returns 200 OK after successful processing
  */
 export const handleCashfreeWebhook = async (req, res) => {
     try {
-        // Get signature from headers
-        const signature = req.headers['x-cashfree-signature'] || req.headers['x-webhook-signature'];
+        // Get raw body (Buffer from middleware)
+        const rawBody = req.body instanceof Buffer ? req.body : Buffer.from(JSON.stringify(req.body));
         
-        // Verify webhook signature
-        const isValid = verifyCashfreeWebhookSignature(req.body, signature);
+        // Get signature from x-webhook-signature header
+        const signature = req.headers['x-webhook-signature'];
+        
+        // Verify webhook signature FIRST (security check)
+        if (!signature) {
+            console.error('❌ Cashfree webhook: Missing x-webhook-signature header');
+            return res.status(401).json({
+                success: false,
+                message: 'Missing webhook signature',
+            });
+        }
+
+        const isValid = verifyCashfreeWebhookSignature(rawBody, signature);
         
         if (!isValid) {
-            console.error('❌ Invalid Cashfree webhook signature');
+            console.error('❌ Cashfree webhook: Invalid signature - rejecting');
             return res.status(401).json({
                 success: false,
                 message: 'Invalid webhook signature',
             });
         }
 
-        const webhookData = req.body;
-        const orderId = webhookData.data?.order?.order_id || webhookData.order_id;
-        const orderStatus = webhookData.data?.order?.order_status || webhookData.order_status;
-        const paymentStatus = webhookData.data?.payment?.payment_status || webhookData.payment_status;
-
-        if (!orderId) {
-            console.error('❌ Cashfree webhook missing order_id');
+        // Parse webhook payload (after signature verification)
+        let webhookData;
+        try {
+            const payloadString = rawBody instanceof Buffer ? rawBody.toString('utf8') : rawBody;
+            webhookData = typeof payloadString === 'string' ? JSON.parse(payloadString) : payloadString;
+        } catch (parseError) {
+            console.error('❌ Cashfree webhook: Failed to parse body:', parseError.message);
             return res.status(400).json({
                 success: false,
-                message: 'Missing order_id in webhook',
+                message: 'Invalid webhook payload',
             });
         }
 
-        // Find order
-        const order = await Order.findById(orderId).populate('items.product user');
+        // Extract webhook data
+        const eventType = webhookData.type || webhookData.event || 'unknown';
+        const cashfreeOrderId = webhookData.data?.order?.order_id || webhookData.order_id;
+        const orderStatus = webhookData.data?.order?.order_status || webhookData.order_status;
+        const paymentStatus = webhookData.data?.payment?.payment_status || webhookData.payment_status;
+
+        // Safe logging (no secrets)
+        console.log('📥 Cashfree webhook received:', {
+            eventType,
+            cashfreeOrderId: cashfreeOrderId?.substring(0, 30) + (cashfreeOrderId?.length > 30 ? '...' : ''),
+            orderStatus,
+            paymentStatus,
+        });
+
+        if (!cashfreeOrderId) {
+            console.warn('⚠️  Cashfree webhook: Missing order_id');
+            // Return 200 OK even if order_id missing (prevent retries)
+            return res.status(200).json({
+                success: true,
+                message: 'Webhook received but order_id missing',
+            });
+        }
+
+        // Find order by cashfreeOrderId in paymentAttempts array (validate attemptId)
+        let order = null;
+        let matchingAttempt = null;
+
+        // First, try to find order by current cashfreeOrderId
+        order = await Order.findOne({ cashfreeOrderId }).populate('items.product user');
+
+        // If not found, search in paymentAttempts array
+        if (!order) {
+            // Extract attemptId from cashfreeOrderId format: OZME_{orderId}_{attemptId}
+            if (cashfreeOrderId.startsWith('OZME_')) {
+                const parts = cashfreeOrderId.split('_');
+                if (parts.length >= 3) {
+                    const internalOrderId = parts[1];
+                    const attemptId = parts.slice(2).join('_'); // Handle attemptId that might contain underscores
+                    
+                    order = await Order.findById(internalOrderId).populate('items.product user');
+                    if (order && order.paymentAttempts) {
+                        // Find matching attempt
+                        matchingAttempt = order.paymentAttempts.find(
+                            attempt => attempt.cashfreeOrderId === cashfreeOrderId || 
+                                      attempt.attemptId === attemptId ||
+                                      attempt.cashfreeOrderId?.endsWith(attemptId)
+                        );
+                        
+                        if (!matchingAttempt) {
+                            // Try to find by exact cashfreeOrderId match in attempts
+                            matchingAttempt = order.paymentAttempts.find(
+                                attempt => attempt.cashfreeOrderId === cashfreeOrderId
+                            );
+                        }
+                    }
+                } else if (parts.length >= 2) {
+                    // Fallback: old format OZME_{orderId}
+                    const internalOrderId = parts[1];
+                    order = await Order.findById(internalOrderId).populate('items.product user');
+                }
+            }
+        } else {
+            // Order found by cashfreeOrderId, find matching attempt
+            if (order.paymentAttempts) {
+                matchingAttempt = order.paymentAttempts.find(
+                    attempt => attempt.cashfreeOrderId === cashfreeOrderId
+                );
+            }
+        }
 
         if (!order) {
-            console.error(`❌ Order not found: ${orderId}`);
-            return res.status(404).json({
-                success: false,
-                message: 'Order not found',
+            console.warn(`⚠️  Cashfree webhook: Order not found for order_id: ${cashfreeOrderId}`);
+            // Return 200 OK even if order not found (prevent retries)
+            return res.status(200).json({
+                success: true,
+                message: 'Webhook received but order not found',
             });
+        }
+
+        // CRITICAL: Validate that this webhook is for the current/latest attempt
+        // Ignore webhooks from old/cancelled attempts
+        if (matchingAttempt) {
+            if (matchingAttempt.status === 'CANCELLED' || matchingAttempt.status === 'FAILED') {
+                console.log(`⚠️  Cashfree webhook: Ignoring webhook for cancelled/failed attempt: ${matchingAttempt.attemptId}`);
+                return res.status(200).json({
+                    success: true,
+                    message: 'Webhook received for cancelled/failed attempt - ignored',
+                });
+            }
+        } else {
+            // No matching attempt found - this might be an old webhook
+            // Check if order has a current attempt that doesn't match
+            if (order.paymentAttempts && order.paymentAttempts.length > 0) {
+                const latestAttempt = order.paymentAttempts[order.paymentAttempts.length - 1];
+                if (latestAttempt.cashfreeOrderId !== cashfreeOrderId && latestAttempt.status === 'PENDING') {
+                    console.log(`⚠️  Cashfree webhook: Ignoring webhook for stale attempt. Current attempt: ${latestAttempt.attemptId}`);
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Webhook received for stale attempt - ignored',
+                    });
+                }
+            }
         }
 
         // Handle payment success
         if (orderStatus === 'PAID' || paymentStatus === 'SUCCESS') {
             // Check if already processed (idempotency)
             if (order.paymentStatus === 'Paid' && order.orderStatus !== 'Pending') {
-                console.log(`✅ Order ${orderId} already processed - skipping`);
+                console.log(`✅ Order ${order._id} already processed - idempotent skip`);
                 return res.status(200).json({
                     success: true,
                     message: 'Order already processed',
                 });
             }
 
+            // Update matching attempt status
+            if (matchingAttempt) {
+                matchingAttempt.status = 'SUCCESS';
+                matchingAttempt.completedAt = new Date();
+            }
+
             // Reduce product stock (same logic as Razorpay)
             const orderItems = order.items || [];
             
             for (const orderItem of orderItems) {
-                const product = await Product.findById(orderItem.product);
-                if (!product) {
-                    console.error(`Product with ID ${orderItem.product} not found during stock reduction`);
-                    continue;
-                }
+                try {
+                    const product = await Product.findById(orderItem.product);
+                    if (!product) {
+                        console.error(`⚠️  Product with ID ${orderItem.product} not found during stock reduction`);
+                        continue;
+                    }
 
-                const orderedSize = orderItem.size || '100ML';
-                const orderedQuantity = orderItem.quantity || 1;
+                    const orderedSize = orderItem.size || '120ML';
+                    const orderedQuantity = orderItem.quantity || 1;
 
-                if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
-                    const sizeIndex = product.sizes.findIndex(s => 
-                        s.size && s.size.toUpperCase() === orderedSize.toUpperCase()
-                    );
+                    if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+                        const sizeIndex = product.sizes.findIndex(s => 
+                            s.size && s.size.toUpperCase() === orderedSize.toUpperCase()
+                        );
 
-                    if (sizeIndex !== -1) {
-                        const currentStock = product.sizes[sizeIndex].stockQuantity || 0;
-                        
+                        if (sizeIndex !== -1) {
+                            const currentStock = product.sizes[sizeIndex].stockQuantity || 0;
+                            
+                            if (currentStock >= orderedQuantity) {
+                                product.sizes[sizeIndex].stockQuantity = currentStock - orderedQuantity;
+                                product.sizes[sizeIndex].inStock = (product.sizes[sizeIndex].stockQuantity || 0) > 0;
+                                product.stockQuantity = product.sizes.reduce((sum, s) => sum + (s.stockQuantity || 0), 0);
+                                product.inStock = product.sizes.some(s => s.inStock !== false && (s.stockQuantity || 0) > 0);
+                                await product.save();
+                            }
+                        }
+                    } else {
+                        const currentStock = product.stockQuantity || 0;
                         if (currentStock >= orderedQuantity) {
-                            product.sizes[sizeIndex].stockQuantity = currentStock - orderedQuantity;
-                            product.sizes[sizeIndex].inStock = (product.sizes[sizeIndex].stockQuantity || 0) > 0;
-                            product.stockQuantity = product.sizes.reduce((sum, s) => sum + (s.stockQuantity || 0), 0);
-                            product.inStock = product.sizes.some(s => s.inStock !== false && (s.stockQuantity || 0) > 0);
+                            product.stockQuantity = currentStock - orderedQuantity;
+                            product.inStock = product.stockQuantity > 0;
                             await product.save();
                         }
                     }
-                } else {
-                    const currentStock = product.stockQuantity || 0;
-                    if (currentStock >= orderedQuantity) {
-                        product.stockQuantity = currentStock - orderedQuantity;
-                        product.inStock = product.stockQuantity > 0;
-                        await product.save();
-                    }
+                } catch (stockError) {
+                    console.error('⚠️  Stock reduction error:', stockError.message);
+                    // Continue processing other items
                 }
+            }
+
+            // Extract payment method type from webhook
+            const paymentMethodType = webhookData.data?.payment?.payment_method || 
+                                     webhookData.payment?.payment_method || 
+                                     webhookData.data?.payment_method ||
+                                     null;
+            
+            // Map Cashfree payment method codes to readable names
+            let paymentMethodDisplay = null;
+            if (paymentMethodType) {
+              const methodMap = {
+                'upi': 'UPI',
+                'cc': 'Credit Card',
+                'dc': 'Debit Card',
+                'nb': 'Net Banking',
+                'wallet': 'Wallet',
+                'app': 'App',
+                'paylater': 'Pay Later',
+              };
+              paymentMethodDisplay = methodMap[paymentMethodType.toLowerCase()] || paymentMethodType;
             }
 
             // Update order status
             order.paymentId = webhookData.data?.payment?.payment_id || webhookData.payment_id || 'cashfree_payment';
             order.paymentStatus = 'Paid';
             order.orderStatus = 'Processing';
+            if (paymentMethodDisplay) {
+              order.paymentMethodType = paymentMethodDisplay;
+            }
             await order.save();
 
             // Send confirmation emails (non-blocking)
             try {
                 await sendOrderConfirmationEmail(order, order.user);
             } catch (emailError) {
-                console.error('❌ Failed to send order confirmation email:', emailError.message);
+                console.error('⚠️  Failed to send order confirmation email:', emailError.message);
             }
 
             try {
                 await sendAdminOrderNotification(order);
             } catch (emailError) {
-                console.error('❌ Failed to send admin order notification:', emailError.message);
+                console.error('⚠️  Failed to send admin order notification:', emailError.message);
             }
 
-            console.log(`✅ Order ${orderId} payment confirmed via Cashfree webhook`);
-        } else if (orderStatus === 'ACTIVE' || orderStatus === 'EXPIRED') {
-            // Payment pending or expired
-            order.paymentStatus = orderStatus === 'EXPIRED' ? 'Failed' : 'Pending';
-            await order.save();
-        }
+            console.log(`✅ Order ${order._id} payment confirmed via Cashfree webhook - Status: ${order.paymentStatus}`);
 
-        // Always return 200 to acknowledge webhook receipt
-        res.status(200).json({
-            success: true,
-            message: 'Webhook processed successfully',
-        });
+            // Return 200 OK after successful processing
+            return res.status(200).json({
+                success: true,
+                message: 'Webhook processed successfully',
+            });
+        } else if (orderStatus === 'ACTIVE' || orderStatus === 'EXPIRED' || paymentStatus === 'FAILED' || paymentStatus === 'CANCELLED') {
+            // Payment pending, expired, failed, or cancelled
+            const newStatus = orderStatus === 'EXPIRED' || paymentStatus === 'FAILED' || paymentStatus === 'CANCELLED' 
+                ? 'Failed' 
+                : 'Pending';
+            
+            // Only update if this is for the current attempt
+            if (matchingAttempt && matchingAttempt.status === 'PENDING') {
+                matchingAttempt.status = orderStatus === 'EXPIRED' ? 'EXPIRED' : 
+                                       paymentStatus === 'CANCELLED' ? 'CANCELLED' : 
+                                       paymentStatus === 'FAILED' ? 'FAILED' : 'PENDING';
+                if (newStatus === 'Failed') {
+                    matchingAttempt.completedAt = new Date();
+                }
+                
+                // Only update order status if this is the latest attempt
+                const latestAttempt = order.paymentAttempts[order.paymentAttempts.length - 1];
+                if (matchingAttempt.attemptId === latestAttempt.attemptId) {
+                    order.paymentStatus = newStatus;
+                    if (newStatus === 'Failed') {
+                        order.failureReason = orderStatus === 'EXPIRED' ? 'EXPIRED' : 
+                                           paymentStatus === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
+                    }
+                }
+            }
+            
+            await order.save();
+            console.log(`📝 Order ${order._id} status updated: ${order.paymentStatus}`);
+
+            // Return 200 OK
+            return res.status(200).json({
+                success: true,
+                message: 'Webhook processed successfully',
+            });
+        } else {
+            // Unknown status - log but return 200 OK
+            console.log(`📝 Order ${order._id} received webhook with status: ${orderStatus || paymentStatus || 'unknown'}`);
+            return res.status(200).json({
+                success: true,
+                message: 'Webhook received',
+            });
+        }
     } catch (error) {
-        console.error('Cashfree webhook error:', error);
-        // Still return 200 to prevent Cashfree from retrying
-        res.status(200).json({
+        // Log error but return 200 OK to prevent retries
+        console.error('❌ Cashfree webhook processing error:', error.message);
+        console.error('   Stack:', error.stack?.substring(0, 200));
+        
+        return res.status(200).json({
             success: false,
             message: 'Webhook processing error',
-            error: error.message,
         });
     }
 };
@@ -591,33 +938,41 @@ export const initiatePhonePePayment = async (req, res) => {
             phone: customerInfo.phone ? '***' : 'missing',
         });
 
-        // Validate PhonePe PROD configuration
-        const hasPhonePeConfig = process.env.PHONEPE_MERCHANT_ID && process.env.PHONEPE_CLIENT_ID && process.env.PHONEPE_CLIENT_SECRET;
+        // Validate PhonePe PROD configuration - SALT_KEY and SALT_INDEX are REQUIRED
+        const hasMerchantId = !!process.env.PHONEPE_MERCHANT_ID;
         const hasSaltKey = !!process.env.PHONEPE_SALT_KEY;
+        const hasSaltIndex = !!process.env.PHONEPE_SALT_INDEX;
         const phonePeMode = process.env.PHONEPE_MODE || 'PROD';
         
-        if (!hasPhonePeConfig) {
-            console.error('❌ PhonePe PROD credentials not configured!');
-            console.error('   PHONEPE_MERCHANT_ID:', process.env.PHONEPE_MERCHANT_ID ? '✓ Set' : '✗ Missing');
-            console.error('   PHONEPE_CLIENT_ID:', process.env.PHONEPE_CLIENT_ID ? '✓ Set' : '✗ Missing');
-            console.error('   PHONEPE_CLIENT_SECRET:', process.env.PHONEPE_CLIENT_SECRET ? '✓ Set' : '✗ Missing');
+        // CRITICAL: Payment initiation MUST fail if SALT_KEY or SALT_INDEX is missing
+        if (!hasMerchantId) {
+            console.error('❌ PhonePe PROD MERCHANT_ID not configured!');
             return res.status(500).json({
                 success: false,
-                message: 'Payment gateway not configured. Please contact support.',
-                error: 'PhonePe PROD credentials missing',
+                message: 'Payment gateway configuration error. Please contact support.',
+                error: 'PhonePe PROD MERCHANT_ID missing',
             });
         }
 
-        // CRITICAL: SALT_KEY is REQUIRED for X-VERIFY signature in PROD
         if (!hasSaltKey) {
-            console.error('❌ PhonePe PROD SALT_KEY not configured!');
+            console.error('❌ PhonePe PROD SALT_KEY is REQUIRED but not configured!');
             console.error('   PHONEPE_SALT_KEY:', '✗ Missing (REQUIRED for X-VERIFY signature)');
-            console.error('   PHONEPE_SALT_INDEX:', process.env.PHONEPE_SALT_INDEX || 'Not set (defaults to "1")');
-            console.error('   Note: Even SDK-based integration uses SALT_KEY (not clientSecret) for signature');
+            console.error('   Payment initiation cannot proceed without SALT_KEY');
             return res.status(500).json({
                 success: false,
                 message: 'Payment gateway configuration error. Please contact support.',
                 error: 'PhonePe PROD SALT_KEY missing (required for signature)',
+            });
+        }
+
+        if (!hasSaltIndex) {
+            console.error('❌ PhonePe PROD SALT_INDEX is REQUIRED but not configured!');
+            console.error('   PHONEPE_SALT_INDEX:', '✗ Missing (REQUIRED for X-VERIFY signature)');
+            console.error('   Payment initiation cannot proceed without SALT_INDEX');
+            return res.status(500).json({
+                success: false,
+                message: 'Payment gateway configuration error. Please contact support.',
+                error: 'PhonePe PROD SALT_INDEX missing (required for signature)',
             });
         }
 
@@ -631,15 +986,14 @@ export const initiatePhonePePayment = async (req, res) => {
             });
         }
 
-        console.log('✅ PhonePe PROD configuration validated:', {
+        console.log('✅ PhonePe PROD configuration validated (Pay Page):', {
             mode: 'PROD',
             baseURL: process.env.PHONEPE_BASE_URL || 'https://api.phonepe.com/apis/hermes',
             merchantId: process.env.PHONEPE_MERCHANT_ID?.substring(0, 10) + '...',
-            clientId: process.env.PHONEPE_CLIENT_ID?.substring(0, 10) + '...',
-            clientVersion: process.env.PHONEPE_CLIENT_VERSION || '1',
-            hasSaltKey: true,
+            saltKeyLength: process.env.PHONEPE_SALT_KEY?.length || 0,
             saltIndex: process.env.PHONEPE_SALT_INDEX || '1',
-            integrationStyle: 'Pay Page (Checksum/Salt flow - X-VERIFY uses SALT_KEY + SALT_INDEX)',
+            integrationType: 'Pay Page (Checksum/Salt flow)',
+            signatureFormat: 'sha256(base64Payload + endpoint + SALT_KEY) + "###" + SALT_INDEX',
         });
 
         // Prepare redirect and callback URLs from env (PROD only)
@@ -831,28 +1185,14 @@ export const phonepeCallback = async (req, res) => {
             }
         }
 
-        const xVerifyHeader = req.headers['x-verify'] || req.headers['x-verify-header'];
         const callbackBody = req.body;
 
         console.log('📥 PhonePe callback received:', {
-            hasXVerify: !!xVerifyHeader,
             hasBody: !!callbackBody,
             hasAuth: !!(webhookUsername && webhookPassword),
         });
 
-        // Verify signature
-        const isValid = verifyPhonePeCallback(callbackBody, xVerifyHeader);
-        
-        if (!isValid) {
-            console.error('❌ Invalid PhonePe callback signature');
-            // Still return 200 to prevent retries, but log the error
-            return res.status(200).json({
-                success: false,
-                message: 'Invalid signature',
-            });
-        }
-
-        // Extract payment details from callback
+        // Extract merchantTransactionId from callback payload
         // PhonePe sends response in base64 encoded format
         let paymentData = callbackBody;
         if (callbackBody?.response) {
@@ -865,10 +1205,6 @@ export const phonepeCallback = async (req, res) => {
         }
 
         const merchantTransactionId = paymentData?.merchantTransactionId || paymentData?.data?.merchantTransactionId;
-        const transactionId = paymentData?.transactionId || paymentData?.data?.transactionId;
-        const state = paymentData?.state || paymentData?.data?.state; // SUCCESS, FAILED, PENDING
-        const amount = paymentData?.amount || paymentData?.data?.amount;
-        const responseCode = paymentData?.responseCode || paymentData?.data?.responseCode;
 
         if (!merchantTransactionId) {
             console.error('❌ PhonePe callback missing merchantTransactionId');
@@ -878,13 +1214,35 @@ export const phonepeCallback = async (req, res) => {
             });
         }
 
-        console.log('🔍 PhonePe callback details:', {
-            merchantTransactionId,
-            transactionId,
-            state,
-            amount,
-            responseCode,
-        });
+        console.log('🔍 PhonePe callback - merchantTransactionId:', merchantTransactionId);
+
+        // CRITICAL: Use status API as source of truth instead of callback payload
+        // This ensures we get accurate payment status from PhonePe PROD API
+        console.log('📡 Querying PhonePe status API for payment status...');
+        const { getPhonePeStatus } = await import('../utils/phonepe.js');
+        let statusData;
+        try {
+            statusData = await getPhonePeStatus(merchantTransactionId);
+            console.log('✅ PhonePe status API response:', {
+                merchantTransactionId,
+                state: statusData.state,
+                transactionId: statusData.transactionId,
+                responseCode: statusData.responseCode,
+            });
+        } catch (statusError) {
+            console.error('❌ Failed to fetch payment status from PhonePe API:', statusError.message);
+            // Still return 200 to prevent retries, but log the error
+            return res.status(200).json({
+                success: false,
+                message: 'Failed to verify payment status',
+                error: statusError.message,
+            });
+        }
+
+        // Use status API response as source of truth
+        const state = statusData.state; // SUCCESS, FAILED, PENDING
+        const transactionId = statusData.transactionId;
+        const responseCode = statusData.responseCode;
 
         // Find order by merchantTransactionId
         const order = await Order.findOne({ merchantTransactionId }).populate('items.product user');
@@ -897,7 +1255,7 @@ export const phonepeCallback = async (req, res) => {
             });
         }
 
-        // Handle payment success
+        // Handle payment status based on PhonePe status API response (source of truth)
         if (state === 'SUCCESS' || responseCode === 'PAYMENT_SUCCESS') {
             // Idempotency check - prevent duplicate processing
             if (order.paymentStatus === 'Paid' && order.orderStatus !== 'Pending') {
@@ -920,7 +1278,7 @@ export const phonepeCallback = async (req, res) => {
                     continue;
                 }
 
-                const orderedSize = orderItem.size || '100ML';
+                const orderedSize = orderItem.size || '120ML';
                 const orderedQuantity = orderItem.quantity || 1;
 
                 if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {

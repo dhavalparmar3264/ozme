@@ -9,7 +9,8 @@ import jwt from 'jsonwebtoken';
  */
 export const generateToken = (userId, secret = null, expiresIn = null) => {
   const jwtSecret = secret || process.env.JWT_SECRET;
-  const tokenExpiry = expiresIn || process.env.JWT_EXPIRE || '7d';
+  // Default to 30 days if not specified
+  const tokenExpiry = expiresIn || process.env.JWT_EXPIRE || '30d';
   return jwt.sign({ id: userId }, jwtSecret, {
     expiresIn: tokenExpiry,
   });

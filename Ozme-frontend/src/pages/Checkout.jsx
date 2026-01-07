@@ -116,8 +116,31 @@ export default function CheckoutPage() {
     // Note: StateCitySelect component handles cities internally
     const [showPhoneVerificationModal, setShowPhoneVerificationModal] = useState(false);
 
-    // Use cart from context
-    const cartItems = cart.length > 0 ? cart : [];
+    // Buy Now item state (takes precedence over cart)
+    const [buyNowItem, setBuyNowItem] = useState(null);
+
+    // Load buyNowItem from storage on mount
+    useEffect(() => {
+        try {
+            // Check sessionStorage first, then localStorage as fallback
+            const sessionItem = sessionStorage.getItem('buyNowItem');
+            const localItem = localStorage.getItem('buyNowItem');
+            const itemToUse = sessionItem || localItem;
+            
+            if (itemToUse) {
+                const parsed = JSON.parse(itemToUse);
+                setBuyNowItem(parsed);
+            }
+        } catch (error) {
+            console.error('Error loading buyNowItem:', error);
+            // Clear invalid data
+            sessionStorage.removeItem('buyNowItem');
+            localStorage.removeItem('buyNowItem');
+        }
+    }, []);
+
+    // Use buyNowItem if it exists, otherwise use cart
+    const cartItems = buyNowItem ? [buyNowItem] : (cart.length > 0 ? cart : []);
     const subtotal = cartItems.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
     const shippingCost = 0;
     const discountAmount = promoCodeDiscount || 0;
@@ -139,13 +162,47 @@ export default function CheckoutPage() {
         }
     }, []);
 
-    // PhonePe doesn't require SDK preloading - it uses direct redirect
+    // Cashfree uses Checkout JS SDK (drop-in) for payment processing
 
-    // Check phone verification status
+    // Check phone verification status from backend (single source of truth)
     useEffect(() => {
-        if (isAuthenticated && user && !user.phoneVerified) {
-            setShowPhoneVerificationModal(true);
-        }
+        const checkPhoneVerification = async () => {
+            if (!isAuthenticated || !user) return;
+            
+            try {
+                // Always check backend for latest verification status
+                // Use /auth/me as single source of truth (not /phone/status to avoid race conditions)
+                const meResponse = await apiRequest('/auth/me');
+                if (meResponse && meResponse.success && meResponse.data?.user) {
+                    const verified = meResponse.data.user.phoneVerified === true || meResponse.data.user.isPhoneVerified === true;
+                    console.log('[Checkout] Backend verification status:', verified, 'phoneVerified:', meResponse.data.user.phoneVerified);
+                    if (!verified) {
+                        setShowPhoneVerificationModal(true);
+                    } else {
+                        setShowPhoneVerificationModal(false);
+                    }
+                } else {
+                    // Fallback to user object from context
+                    const verified = user.phoneVerified === true || user.isPhoneVerified === true;
+                    if (!verified) {
+                        setShowPhoneVerificationModal(true);
+                    } else {
+                        setShowPhoneVerificationModal(false);
+                    }
+                }
+            } catch (error) {
+                console.error('[Checkout] Error checking phone verification:', error);
+                // Fallback to user object from context
+                const verified = user.phoneVerified === true || user.isPhoneVerified === true;
+                if (!verified) {
+                    setShowPhoneVerificationModal(true);
+                } else {
+                    setShowPhoneVerificationModal(false);
+                }
+            }
+        };
+        
+        checkPhoneVerification();
     }, [isAuthenticated, user]);
 
     // Fetch user profile and addresses when logged in
@@ -425,8 +482,8 @@ export default function CheckoutPage() {
         }
     };
 
-    // Redirect if cart is empty
-    if (cartItems.length === 0 && !orderComplete) {
+    // Redirect if cart is empty (and no buyNowItem)
+    if (cartItems.length === 0 && !orderComplete && !buyNowItem) {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center">
                 <div className="text-center">
@@ -606,7 +663,7 @@ export default function CheckoutPage() {
             const orderItems = validCartItems.map(item => ({
                 productId: item.id.toString(),
                 quantity: item.quantity || 1,
-                size: item.size || '100ml',
+                size: item.size || '120ml',
                 price: item.price,
             }));
 
@@ -653,27 +710,25 @@ export default function CheckoutPage() {
                 localStorage.setItem('lastOrderId', orderId);
             }
 
-            // Clear cart after successful order creation (before payment redirect)
-            try {
-                clearCart(); // Clear cart context
-                // Clear localStorage cart keys
-                localStorage.removeItem('cart');
-                localStorage.removeItem('cartItems');
-                localStorage.removeItem('guestCart');
-                console.log('✅ Cart cleared after order creation');
-            } catch (cartError) {
-                console.warn('⚠️ Error clearing cart:', cartError);
-                // Don't fail order if cart clearing fails
-            }
+            // CRITICAL: Do NOT clear cart before payment - cart will be cleared after successful payment
+            // Cart clearing happens on success page or via webhook confirmation
+            console.log('📦 Cart preserved for payment flow');
 
-            // Step 2: Create PhonePe payment
-            console.log('🔄 Creating PhonePe payment session...');
+            // Step 2: Create Cashfree payment session
+            console.log('🔄 Creating Cashfree payment session...');
+            console.log('💰 Frontend amount details:', {
+                subtotal: subtotal,
+                shippingCost: shippingCost,
+                discountAmount: discountAmount,
+                totalRupees: total,
+                orderId: orderId.toString().substring(0, 10) + '...',
+            });
             
-            const phonepeResponse = await apiRequest('/payments/phonepe/create', {
+            const cashfreeResponse = await apiRequest('/payments/cashfree/create', {
                 method: 'POST',
                 body: JSON.stringify({
                     orderId: orderId,
-                    amount: total,
+                    amount: total, // Amount in RUPEES (e.g., 799)
                     customerDetails: {
                         name: `${formData.firstName} ${formData.lastName}`,
                         email: formData.email,
@@ -683,61 +738,182 @@ export default function CheckoutPage() {
                 }),
             });
 
-            if (!phonepeResponse) {
+            if (!cashfreeResponse) {
                 throw new Error('Unable to connect to payment service. Please check your internet connection and try again.');
             }
 
-            if (!phonepeResponse.success) {
-                const errorMsg = phonepeResponse?.message || phonepeResponse?.error || 'Failed to create payment session';
-                console.error('❌ PhonePe payment session creation failed:', {
-                    response: phonepeResponse,
+            if (!cashfreeResponse.success) {
+                const errorMsg = cashfreeResponse?.message || cashfreeResponse?.error || 'Failed to create payment session';
+                console.error('❌ Cashfree payment session creation failed:', {
+                    response: cashfreeResponse,
                     orderId,
                     amount: total,
                 });
                 throw new Error(errorMsg);
             }
 
-            const { redirectUrl, merchantTransactionId } = phonepeResponse.data;
+            const { payment_session_id, amountRupees } = cashfreeResponse.data;
 
-            if (!redirectUrl) {
-                console.error('❌ Redirect URL missing from response:', phonepeResponse.data);
-                throw new Error('Payment redirect URL not received from PhonePe');
+            if (!payment_session_id) {
+                console.error('❌ Payment session ID missing from response:', cashfreeResponse.data);
+                throw new Error('Payment session ID not received from Cashfree');
             }
 
-            // CRITICAL: Validate redirect URL is PROD (not UAT/simulator)
-            const redirectUrlLower = redirectUrl.toLowerCase();
-            const isUatUrl = redirectUrlLower.includes('mercury-uat') ||
-                            redirectUrlLower.includes('merchant-simulator') ||
-                            redirectUrlLower.includes('preprod') ||
-                            redirectUrlLower.includes('sandbox') ||
-                            redirectUrlLower.includes('testing') ||
-                            redirectUrlLower.includes('api-testing') ||
-                            redirectUrlLower.includes('/simulator') ||
-                            redirectUrlLower.includes('pgtest');
-
-            if (isUatUrl) {
-                console.error('❌ CRITICAL: PhonePe returned UAT/simulator URL!');
-                console.error('   URL:', redirectUrl);
-                console.error('   This indicates the payment gateway is in TEST mode.');
-                throw new Error('Payment gateway is in TEST mode. Please contact support. Payment cannot be processed.');
+            // CRITICAL: Validate amount before redirecting to Cashfree
+            if (!amountRupees || amountRupees <= 0) {
+                console.error('❌ Invalid amount from backend:', amountRupees);
+                toast.error('Payment amount error. Please refresh and try again.');
+                throw new Error('Invalid payment amount received from server');
             }
 
-            // Verify it's a PhonePe PROD URL
-            if (!redirectUrlLower.includes('phonepe.com') || !redirectUrlLower.includes('api.phonepe.com')) {
-                console.warn('⚠️  Warning: Redirect URL does not appear to be PhonePe PROD:', redirectUrl.substring(0, 100));
+            // CRITICAL: Compare backend amount with frontend cart total
+            const amountDifference = Math.abs(amountRupees - total);
+            const amountRatio = amountRupees > total ? amountRupees / total : total / amountRupees;
+            
+            // Block if amount mismatch detected (allow 1 rupee difference for rounding)
+            if (amountDifference > 1) {
+                // Check for 100x/0.01x mistakes
+                if (amountRatio > 50 || amountRatio < 0.02) {
+                    console.error('❌ CRITICAL: Amount mismatch detected (possible 100x error):', {
+                        frontendTotal: total,
+                        backendAmountRupees: amountRupees,
+                        difference: amountDifference,
+                        ratio: amountRatio,
+                    });
+                    toast.error('Payment amount mismatch detected. Please refresh the page and try again.');
+                    throw new Error('Payment amount mismatch. Please refresh and try again.');
+                } else {
+                    console.warn('⚠️  Amount mismatch (using backend amount):', {
+                        frontendTotal: total,
+                        backendAmountRupees: amountRupees,
+                        difference: amountDifference,
+                    });
+                    // Use backend amount (authoritative)
+                }
             }
 
-            console.log('✅ PhonePe payment session created:', {
-                merchantTransactionId,
-                redirectUrl: redirectUrl.substring(0, 50) + '...',
+            console.log('✅ Cashfree payment session created:', {
+                payment_session_id: payment_session_id.substring(0, 20) + '...',
                 orderId,
-                amount: total,
-                isProdUrl: !isUatUrl
+                frontendTotal: total,
+                backendAmountRupees: amountRupees,
+                amountMatch: amountDifference <= 1,
             });
 
-            // Step 3: Redirect to PhonePe payment page (PROD only)
-            console.log('🚀 Redirecting to PhonePe PROD payment page...');
-            window.location.href = redirectUrl;
+            // Step 3: Open Cashfree Checkout using SDK ONLY (no direct URL redirects)
+            // CRITICAL: Display amount before redirecting
+            console.log('🚀 Opening Cashfree Checkout via SDK...');
+            console.log('📋 Payment Session ID:', payment_session_id.substring(0, 30) + '...');
+            console.log('💰 Payment Amount:', {
+                amountRupees: amountRupees,
+                frontendTotal: total,
+                match: amountDifference <= 1,
+            });
+            
+            // Show amount to user before redirect
+            toast.success(`Redirecting to payment gateway for ₹${amountRupees.toLocaleString('en-IN')}`, {
+                duration: 2000,
+            });
+            
+            // Function to open Cashfree checkout using SDK
+            const openCashfreeCheckout = () => {
+                if (!window.Cashfree) {
+                    console.error('❌ Cashfree SDK not available');
+                    throw new Error('Cashfree payment gateway is not available. Please refresh the page and try again.');
+                }
+
+                try {
+                    console.log('✅ Cashfree SDK available, initializing...');
+                    
+                    // Correct Cashfree SDK v3 API:
+                    // 1. Initialize: Cashfree({ mode: "production" }) - NO 'new' keyword
+                    // 2. Call: cashfree.checkout({ paymentSessionId, redirectTarget })
+                    const cashfree = window.Cashfree({
+                        mode: 'production',
+                    });
+                    
+                    console.log('✅ Cashfree initialized, opening checkout...');
+                    console.log('📋 Parameters:', {
+                        paymentSessionId: payment_session_id.substring(0, 30) + '...',
+                        redirectTarget: '_self',
+                    });
+                    
+                    // Open checkout using correct API
+                    cashfree.checkout({
+                        paymentSessionId: payment_session_id,
+                        redirectTarget: '_self',
+                    });
+                    
+                    console.log('✅ Cashfree checkout opened successfully');
+                } catch (checkoutError) {
+                    console.error('❌ Cashfree checkout error:', checkoutError);
+                    console.error('   Error details:', {
+                        message: checkoutError.message,
+                        stack: checkoutError.stack,
+                        CashfreeType: typeof window.Cashfree,
+                    });
+                    throw new Error('Failed to open payment gateway. Please try again.');
+                }
+            };
+
+            // Check if Cashfree SDK is already loaded
+            if (window.Cashfree) {
+                console.log('✅ Cashfree SDK already loaded');
+                openCashfreeCheckout();
+                return; // Exit after opening checkout
+            }
+
+            // Load Cashfree Checkout JS SDK if not already loaded
+            const scriptId = 'cashfree-checkout-sdk';
+            const existingScript = document.getElementById(scriptId);
+            
+            if (existingScript) {
+                console.log('⚠️ Cashfree script already exists, waiting for SDK...');
+                // Script exists but SDK not ready - wait and retry
+                let retryCount = 0;
+                const maxRetries = 20; // Increased retries
+                const retryInterval = setInterval(() => {
+                    retryCount++;
+                    if (window.Cashfree) {
+                        clearInterval(retryInterval);
+                        console.log('✅ Cashfree SDK ready after wait');
+                        openCashfreeCheckout();
+                    } else if (retryCount >= maxRetries) {
+                        clearInterval(retryInterval);
+                        console.error('❌ Cashfree SDK failed to load after retries');
+                        toast.error('Payment gateway failed to load. Please refresh the page and try again.');
+                    }
+                }, 200);
+                return;
+            }
+
+            // Load the SDK script
+            const script = document.createElement('script');
+            script.id = scriptId;
+            script.src = 'https://sdk.cashfree.com/js/v3/cashfree.js';
+            script.async = true;
+            
+            script.onload = () => {
+                console.log('✅ Cashfree SDK script loaded');
+                // Wait a moment for SDK to initialize (increased wait time)
+                setTimeout(() => {
+                    if (window.Cashfree) {
+                        console.log('✅ Cashfree SDK initialized');
+                        openCashfreeCheckout();
+                    } else {
+                        console.error('❌ Cashfree SDK not available after script load');
+                        console.error('   Available globals:', Object.keys(window).filter(k => k.toLowerCase().includes('cash')));
+                        toast.error('Payment gateway failed to initialize. Please refresh the page and try again.');
+                    }
+                }, 500); // Increased wait time
+            };
+            
+            script.onerror = () => {
+                console.error('❌ Failed to load Cashfree Checkout SDK script');
+                toast.error('Failed to load payment gateway. Please check your internet connection and try again.');
+            };
+            
+            document.head.appendChild(script);
 
         } catch (error) {
             console.error('❌ Online payment error:', error);
@@ -847,7 +1023,7 @@ export default function CheckoutPage() {
             const orderItems = validCartItems.map(item => ({
                 productId: item.id.toString(), // Ensure it's a string
                 quantity: item.quantity || 1,
-                size: item.size || '100ml',
+                size: item.size || '120ml',
                 price: item.price,
             }));
 
@@ -901,7 +1077,7 @@ export default function CheckoutPage() {
                     image: item.image,
                     price: item.price,
                     quantity: item.quantity,
-                    size: item.size || '100ml',
+                    size: item.size || '120ml',
                     category: item.category || 'Perfume'
                 })),
                 shippingAddress: {
@@ -935,6 +1111,13 @@ export default function CheckoutPage() {
             
             // Clear cart after order is placed
             clearCart();
+            
+            // Clear buyNowItem if it exists
+            if (buyNowItem) {
+                sessionStorage.removeItem('buyNowItem');
+                localStorage.removeItem('buyNowItem');
+                setBuyNowItem(null);
+            }
             
             // Clear applied promo code from localStorage
             localStorage.removeItem('appliedPromoCode');
@@ -1118,7 +1301,21 @@ export default function CheckoutPage() {
                             
                             <div className="flex gap-3">
                                 <button
-                                    onClick={() => navigate('/dashboard?tab=profile&verify=phone&from=checkout')}
+                                    onClick={async () => {
+                                        // Check backend status before navigating
+                                        try {
+                                            const statusResponse = await apiRequest('/phone/status');
+                                            if (statusResponse && statusResponse.success && statusResponse.data.phoneVerified) {
+                                                // Already verified, close modal
+                                                setShowPhoneVerificationModal(false);
+                                                toast.success('Phone already verified!');
+                                                return;
+                                            }
+                                        } catch (error) {
+                                            console.error('Error checking phone status:', error);
+                                        }
+                                        navigate('/dashboard?tab=profile&verify=phone&from=checkout');
+                                    }}
                                     className="flex-1 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-lg hover:shadow-lg transition-all duration-300 flex items-center justify-center gap-2"
                                 >
                                     <Phone className="w-4 h-4" />
@@ -1733,7 +1930,7 @@ export default function CheckoutPage() {
                                                             </span>
                                                         </div>
                                                         <p className="text-sm text-gray-600">
-                                                            Pay securely with PhonePe
+                                                            Pay securely with Cashfree
                                                         </p>
                                                     </button>
                                                 </div>
@@ -1756,8 +1953,8 @@ export default function CheckoutPage() {
                                                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
                                                         <Shield className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
                                                         <div>
-                                                            <p className="text-sm font-semibold text-amber-900 mb-1">Secure Payment via PhonePe</p>
-                                                            <p className="text-xs text-amber-700">You will be redirected to PhonePe's secure payment gateway to complete your transaction.</p>
+                                                            <p className="text-sm font-semibold text-amber-900 mb-1">Secure Payment via Cashfree</p>
+                                                            <p className="text-xs text-amber-700">You will be redirected to Cashfree's secure payment gateway to complete your transaction.</p>
                                                         </div>
                                                     </div>
                                                 </>
@@ -1828,7 +2025,7 @@ export default function CheckoutPage() {
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <p className="font-semibold text-gray-900">Online Payment via PhonePe</p>
+                                                        <p className="font-semibold text-gray-900">Online Payment via Cashfree</p>
                                                         <p className="text-sm text-gray-600">Secure payment gateway</p>
                                                     </>
                                                 )}

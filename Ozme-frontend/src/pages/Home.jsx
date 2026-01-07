@@ -67,14 +67,14 @@ export default function Home() {
       setLoading(true);
       
       // Fetch bestseller products (tag='Bestseller') or top rated products
-      // Limit to 8 products for homepage
-      const response = await apiRequest('/products?tag=Bestseller&limit=8');
+      // Limit to 3 products for Best Selling section
+      const response = await apiRequest('/products?tag=Bestseller&limit=3');
       
       if (response && response.success) {
         // Transform backend products to frontend format
         const transformedProducts = response.data.products
           .filter(product => product.active && product.inStock)
-          .slice(0, 8) // Limit to 8 products
+          .slice(0, 3) // Limit to exactly 3 products
           .map(product => ({
             id: product._id,
             _id: product._id,
@@ -91,16 +91,16 @@ export default function Home() {
             gender: product.gender?.toLowerCase() || 'unisex',
             inStock: product.inStock,
             stockQuantity: product.stockQuantity || 0,
-            size: product.size || '100ML'
+            size: product.size || '120ML'
           }));
 
         // If no bestsellers, fetch top rated products instead
         if (transformedProducts.length === 0) {
-          const topRatedResponse = await apiRequest('/products?limit=8');
+          const topRatedResponse = await apiRequest('/products?limit=3');
           if (topRatedResponse && topRatedResponse.success) {
             const topRated = topRatedResponse.data.products
               .filter(product => product.active && product.inStock)
-              .slice(0, 8)
+              .slice(0, 3) // Limit to exactly 3 products
               .map(product => ({
                 id: product._id,
                 _id: product._id,
@@ -117,7 +117,7 @@ export default function Home() {
                 gender: product.gender?.toLowerCase() || 'unisex',
                 inStock: product.inStock,
                 stockQuantity: product.stockQuantity || 0,
-                size: product.size || '100ML'
+                size: product.size || '120ML'
               }))
               .sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Sort by rating
             
@@ -342,7 +342,7 @@ export default function Home() {
                 <p className="text-gray-400 text-lg">No featured products available at the moment.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 w-full">
                 {filterProducts(products, searchQuery).map((product) => (
                 <div
                   key={product.id}
@@ -394,7 +394,7 @@ export default function Home() {
                       {/* Quick Add to Cart Button */}
                       <div className="absolute bottom-0 left-0 right-0 p-4 translate-y-full group-hover:translate-y-0 transition-transform duration-500 ">
                         <button 
-                          onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '100ml'); }}
+                          onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '120ml'); }}
                           className="w-full py-3 bg-white text-gray-900 font-semibold hover:bg-gray-900 hover:text-white transition-all duration-300 flex items-center justify-center gap-2 shadow-xl "
                         >
                           <ShoppingCart className="w-4 h-4" />
@@ -446,7 +446,7 @@ export default function Home() {
                     {/* Mobile Add to Cart Button - Visible on mobile only */}
                     <div className="mt-4 md:hidden">
                       <button 
-                        onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '100ml'); }}
+                        onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '120ml'); }}
                         className="w-full py-3 bg-black text-white font-semibold hover:bg-gray-900 transition-all duration-300 flex items-center justify-center gap-2 shadow-lg"
                       >
                         <ShoppingCart className="w-4 h-4" />

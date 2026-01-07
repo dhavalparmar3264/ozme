@@ -76,5 +76,9 @@ const seedFaqs = async () => {
   }
 };
 
-seedFaqs();
+// Only run if explicitly called (not auto-run on import)
+// Usage: node src/scripts/seedFaqs.js
+if (import.meta.url === `file://${process.argv[1]}`) {
+  seedFaqs();
+}
 

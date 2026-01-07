@@ -76,6 +76,23 @@ npm start
 
 The server will start on `http://localhost:5000` (or your configured PORT).
 
+### Production Deployment with PM2
+
+When deploying with PM2, **always use `--update-env` flag** to ensure environment variables are reloaded:
+
+```bash
+# Restart backend with updated environment variables
+pm2 restart ozme-backend --update-env
+
+# Or start for the first time
+pm2 start src/server.js --name ozme-backend --update-env
+```
+
+**Important:** After updating `.env` file (especially Cloudinary credentials), you **must** restart with `--update-env`:
+- Cloudinary configuration is loaded on server startup
+- Old credentials may be cached in PM2 process memory
+- `--update-env` ensures fresh environment variables are loaded
+
 ## API Endpoints
 
 ### Authentication
@@ -127,7 +144,7 @@ The server will start on `http://localhost:5000` (or your configured PORT).
 - `POST /api/contact` - Submit contact form
 
 ### Health Check
-- `GET /api/health` - Server health check
+- `GET /api/health` - Server health check (includes database and Cloudinary status)
 
 ## Guest Mode
 
@@ -227,13 +244,16 @@ ozme-backend/
 See `.env.example` for all available environment variables.
 
 **Required:**
-- `MONGO_URI` - MongoDB connection string
+- `MONGODB_URI` - MongoDB connection string (Atlas or local)
 - `JWT_SECRET` - Secret for JWT tokens
 - `CLIENT_URL` - Frontend URL for CORS
+- `CLOUDINARY_CLOUD_NAME` - Cloudinary cloud name
+- `CLOUDINARY_API_KEY` - Cloudinary API key
+- `CLOUDINARY_API_SECRET` - Cloudinary API secret
 
 **Optional:**
 - `PORT` - Server port (default: 5000)
-- `JWT_EXPIRE` - JWT expiration (default: 7d)
+- `JWT_EXPIRE` - JWT expiration (default: 30d)
 - Email configuration (for contact form notifications)
 
 ## Integration with Frontend

@@ -11,7 +11,7 @@ import mongoose from 'mongoose';
  * @property {string[]} images - Array of image URLs (max 10)
  * @property {string} category - Product category (from Category collection)
  * @property {string} gender - Target gender (Men/Women/Unisex)
- * @property {string} size - Product size (50ML, 100ML, 150ML, 200ML, 250ML, 300ML)
+ * @property {string} size - Product size (50ML, 120ML, 150ML, 200ML, 250ML, 300ML)
  * @property {number} rating - Average rating
  * @property {number} reviewsCount - Number of reviews
  * @property {string} tag - Product tag (Bestseller/New/Limited)
@@ -60,15 +60,15 @@ const productSchema = new mongoose.Schema(
     },
     size: {
       type: String,
-      default: '100ML',
-      enum: ['50ML', '100ML', '150ML', '200ML', '250ML', '300ML'],
+      default: '120ML',
+      enum: ['50ML', '120ML', '150ML', '200ML', '250ML', '300ML', '50 ml', '120 ml', '150 ml', '200 ml', '250 ml', '300 ml'],
     },
     sizes: {
       type: [
         {
           size: {
             type: String,
-            enum: ['50ML', '100ML', '150ML', '200ML', '250ML', '300ML'],
+            enum: ['50ML', '120ML', '150ML', '200ML', '250ML', '300ML'],
             required: true,
           },
           price: {
@@ -159,6 +159,8 @@ productSchema.pre('validate', function (next) {
 // Index for search and filtering
 productSchema.index({ name: 'text', description: 'text' });
 productSchema.index({ category: 1, gender: 1, price: 1 });
+// Performance index for dashboard low stock query
+productSchema.index({ active: 1 });
 
 const Product = mongoose.model('Product', productSchema);
 

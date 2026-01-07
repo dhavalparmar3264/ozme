@@ -104,6 +104,8 @@ export default function Headers() {
   const isWishlistPage = location.pathname === '/wishlist';
   // Check if we're on the home page (to keep navbar transparent)
   const isHomePage = location.pathname === '/';
+  // Check if we're on the feedback page (force white navbar)
+  const isFeedbackPage = location.pathname === '/feedback';
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
@@ -143,7 +145,7 @@ export default function Headers() {
     // },
     { name: 'About Us', path: '/about' },
     { name: 'Contact', path: '/contact' },
-    ...(isAuthenticated ? [{ name: 'Track Order', path: '/track-order' }] : [])
+    ...(isAuthenticated ? [{ name: 'Your Orders', path: '/track-order' }] : [])
   ];
 
   const handleSearch = (e) => {
@@ -181,8 +183,8 @@ export default function Headers() {
       </div>
 
       {/* Main Navbar - Becomes Fixed on Scroll */}
-      <header className={`fixed top-10 left-0 right-0 z-40 transition-all duration-500 ${
-        (isScrolled || !isHomePage) ? 'bg-white shadow-lg' : 'bg-transparent'
+      <header className={`fixed top-10 left-0 right-0 z-[1000] transition-all duration-500 ${
+        (isScrolled || !isHomePage || isFeedbackPage) ? 'bg-white shadow-lg' : 'bg-transparent'
         }`}>
         <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-8">
           <div className="h-16 min-h-[64px] flex items-center justify-between gap-2">
@@ -190,7 +192,7 @@ export default function Headers() {
             {/* Mobile Menu Toggle */}
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className={`lg:hidden p-2 rounded-lg transition-all ${isScrolled || !isHomePage
+              className={`lg:hidden p-2 rounded-lg transition-all ${isScrolled || !isHomePage || isFeedbackPage
                 ? 'hover:bg-gray-100 text-gray-800'
                 : 'hover:bg-white/10 text-white'
                 }`}
@@ -225,7 +227,7 @@ export default function Headers() {
                   {item.path ? (
                     <Link
                       to={item.path}
-                      className={`flex items-center gap-1 font-medium transition-all text-sm tracking-wide whitespace-nowrap ${isScrolled || !isHomePage
+                      className={`flex items-center gap-1 font-medium transition-all text-sm tracking-wide whitespace-nowrap ${isScrolled || !isHomePage || isFeedbackPage
                         ? 'text-gray-800 hover:text-black'
                         : 'text-white hover:text-amber-300'
                         }`}
@@ -234,7 +236,7 @@ export default function Headers() {
                       {item.dropdown && <ChevronDown className="w-4 h-4" />}
                     </Link>
                   ) : (
-                    <button className={`flex items-center gap-1 font-medium transition-all text-sm tracking-wide whitespace-nowrap ${isScrolled || !isHomePage
+                    <button className={`flex items-center gap-1 font-medium transition-all text-sm tracking-wide whitespace-nowrap ${isScrolled || !isHomePage || isFeedbackPage
                       ? 'text-gray-800 hover:text-black'
                       : 'text-white hover:text-amber-300'
                       }`}>
@@ -302,13 +304,13 @@ export default function Headers() {
                   <button
                     type="button"
                     onClick={handleSearchButtonClick}
-                    className={`p-2.5 rounded-lg transition-all group ${isScrolled || !isHomePage
+                    className={`p-2.5 rounded-lg transition-all group ${isScrolled || !isHomePage || isFeedbackPage
                       ? 'hover:bg-gray-100'
                       : 'hover:bg-white/10'
                       }`}
                     aria-label="Search"
                   >
-                    <Search className={`w-5 h-5 transition-colors ${isScrolled || !isHomePage
+                    <Search className={`w-5 h-5 transition-colors ${isScrolled || !isHomePage || isFeedbackPage
                       ? 'text-gray-600 group-hover:text-black'
                       : 'text-white group-hover:text-amber-300'
                       }`} />
@@ -319,13 +321,13 @@ export default function Headers() {
               {/* Wishlist */}
               <Link to="/wishlist" className="flex" onClick={() => setIsMobileMenuOpen(false)}>
                 <button
-                  className={`relative p-2.5 rounded-lg transition-all group ${isScrolled || !isHomePage
+                  className={`relative p-2.5 rounded-lg transition-all group ${isScrolled || !isHomePage || isFeedbackPage
                     ? 'hover:bg-gray-100'
                     : 'hover:bg-white/10'
                     }`}
                   aria-label="Wishlist"
                 >
-                  <Heart className={`w-5 h-5 transition-colors ${isScrolled || !isHomePage
+                  <Heart className={`w-5 h-5 transition-colors ${isScrolled || !isHomePage || isFeedbackPage
                     ? 'text-gray-600 group-hover:text-red-500'
                     : 'text-white group-hover:text-red-400'
                     }`} />
@@ -340,18 +342,18 @@ export default function Headers() {
               {/* Cart */}
               <Link to="/cart" className="flex" onClick={() => setIsMobileMenuOpen(false)}>
                 <button
-                  className={`relative p-2.5 rounded-lg transition-all group ${isScrolled || !isHomePage
+                  className={`relative p-2.5 rounded-lg transition-all group ${isScrolled || !isHomePage || isFeedbackPage
                     ? 'hover:bg-gray-100'
                     : 'hover:bg-white/10'
                     }`}
                   aria-label="Shopping cart"
                 >
-                  <ShoppingBag className={`w-5 h-5 transition-colors ${isScrolled || !isHomePage
+                  <ShoppingBag className={`w-5 h-5 transition-colors ${isScrolled || !isHomePage || isFeedbackPage
                     ? 'text-gray-600 group-hover:text-black'
                     : 'text-white group-hover:text-amber-300'
                     }`} />
                   {getCartItemCount() > 0 && (
-                    <span className={`absolute top-1 right-1 w-4 h-4 text-white text-[10px] rounded-full flex items-center justify-center font-bold ${isScrolled || !isHomePage ? 'bg-black' : 'bg-amber-500'
+                    <span className={`absolute top-1 right-1 w-4 h-4 text-white text-[10px] rounded-full flex items-center justify-center font-bold ${isScrolled || !isHomePage || isFeedbackPage ? 'bg-black' : 'bg-amber-500'
                       }`}>
                       {getCartItemCount() > 9 ? '9+' : getCartItemCount()}
                     </span>
@@ -373,7 +375,7 @@ export default function Headers() {
                     setIsProfileDropdownOpen(!isProfileDropdownOpen);
                     setIsMobileMenuOpen(false);
                   }}
-                  className={`p-2.5 rounded-lg transition-all group flex items-center justify-center min-w-[40px] min-h-[40px] ${isScrolled || !isHomePage ? 'hover:bg-gray-100' : 'hover:bg-white/10'
+                  className={`p-2.5 rounded-lg transition-all group flex items-center justify-center min-w-[40px] min-h-[40px] ${isScrolled || !isHomePage || isFeedbackPage ? 'hover:bg-gray-100' : 'hover:bg-white/10'
                     }`}
                   aria-label="Profile"
                 >
@@ -385,7 +387,7 @@ export default function Headers() {
                           alt={user.name || 'User'}
                           className="w-6 h-6 rounded-full object-cover border-2 shadow-sm"
                           style={{
-                            borderColor: isScrolled || !isHomePage ? '#e5e7eb' : 'rgba(255, 255, 255, 0.8)'
+                            borderColor: isScrolled || !isHomePage || isFeedbackPage ? '#e5e7eb' : 'rgba(255, 255, 255, 0.8)'
                           }}
                           onError={(e) => {
                             // Hide image and show User icon if image fails to load
@@ -398,7 +400,7 @@ export default function Headers() {
                           }}
                         />
                         <User
-                          className={`hidden user-icon-fallback w-5 h-5 transition-colors flex-shrink-0 absolute inset-0 m-auto ${isScrolled || !isHomePage
+                          className={`hidden user-icon-fallback w-5 h-5 transition-colors flex-shrink-0 absolute inset-0 m-auto ${isScrolled || !isHomePage || isFeedbackPage
                             ? 'text-gray-600 group-hover:text-black'
                             : 'text-white group-hover:text-amber-300'
                             }`}
@@ -407,7 +409,7 @@ export default function Headers() {
                       </>
                     ) : (
                       <User
-                        className={`w-5 h-5 transition-colors flex-shrink-0 ${isScrolled || !isHomePage
+                        className={`w-5 h-5 transition-colors flex-shrink-0 ${isScrolled || !isHomePage || isFeedbackPage
                           ? 'text-gray-600 group-hover:text-black'
                           : 'text-white group-hover:text-amber-300'
                           }`}

@@ -271,7 +271,7 @@ const Products = () => {
           <div className="relative flex items-start justify-between">
             <div className="flex-1">
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Inventory Value</p>
-              <h3 className="text-3xl font-light text-gray-900 dark:text-white mb-3 tracking-tight">${stats.totalValue.toLocaleString()}</h3>
+              <h3 className="text-3xl font-light text-gray-900 dark:text-white mb-3 tracking-tight">₹{stats.totalValue.toLocaleString('en-IN')}</h3>
             </div>
             <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg">
               <TrendingUp className="w-7 h-7 text-white" />
@@ -440,13 +440,14 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
   const [imageInputs, setImageInputs] = useState([0]); // Track file input fields (up to 10)
   const [selectedFiles, setSelectedFiles] = useState([]); // Store File objects
   const [filePreviews, setFilePreviews] = useState([]); // Store preview URLs
+  const [deleteImageConfirm, setDeleteImageConfirm] = useState(null); // { productId, imageUrl, imageIndex }
   const [formData, setFormData] = useState(() => {
     if (editingProduct) {
       // If product has sizes array, use it; otherwise convert single size to array format
       let sizes = [];
       if (editingProduct.sizes && Array.isArray(editingProduct.sizes) && editingProduct.sizes.length > 0) {
         sizes = editingProduct.sizes.map(s => ({
-          size: s.size || '100ML',
+          size: s.size || '120 ml',
           price: s.price || '',
           originalPrice: s.originalPrice || '',
           stockQuantity: s.stockQuantity || 0,
@@ -454,7 +455,7 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
       } else {
         // Convert single size to array format for backward compatibility
         sizes = [{
-          size: editingProduct.size || '100ML',
+          size: editingProduct.size || '120 ml',
           price: editingProduct.price || '',
           originalPrice: editingProduct.originalPrice || '',
           stockQuantity: editingProduct.stockQuantity || 0,
@@ -480,7 +481,7 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
         category: '',
         gender: 'Unisex',
         tag: '',
-        sizes: [{ size: '100ML', price: '', originalPrice: '', stockQuantity: 0 }],
+        sizes: [{ size: '120 ml', price: '', originalPrice: '', stockQuantity: 0 }],
         images: [],
         active: true,
       };
@@ -527,6 +528,19 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
       return;
     }
 
+    // Validate file size (5MB per file)
+    const maxFileSize = 5 * 1024 * 1024; // 5MB in bytes
+    if (file.size > maxFileSize) {
+      alert(`Image "${file.name}" is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum file size is 5MB per image.`);
+      return;
+    }
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      alert(`File "${file.name}" is not an image. Please select an image file.`);
+      return;
+    }
+
     // Create preview URL
     const previewUrl = URL.createObjectURL(file);
 
@@ -553,10 +567,72 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
     setFilePreviews(newPreviews);
   };
 
-  const addImageInput = () => {
-    if (imageInputs.length < 10 && selectedFiles.length < 10) {
-      setImageInputs([...imageInputs, imageInputs.length]);
+  const handleDeleteImage = (productId, imageUrl, imageIndex) => {
+    setDeleteImageConfirm({
+      productId,
+      imageUrl,
+      imageIndex,
+    });
+  };
+
+  const confirmDeleteImage = async () => {
+    if (!deleteImageConfirm) return;
+
+    const { productId, imageUrl } = deleteImageConfirm;
+    const deleteToast = toast.loading('Deleting image...');
+
+    try {
+      const response = await apiRequest(`/admin/products/${productId}/images`, {
+        method: 'DELETE',
+        body: JSON.stringify({ imageUrl }),
+      });
+
+      if (response && response.success) {
+        // Update formData to remove the deleted image
+        setFormData(prev => ({
+          ...prev,
+          images: prev.images.filter(img => img !== imageUrl),
+        }));
+
+        setDeleteImageConfirm(null);
+        toast.success('Image deleted successfully', { id: deleteToast });
+      } else {
+        const errorMsg = response?.message || 'Failed to delete image';
+        toast.error(errorMsg, { id: deleteToast });
+      }
+    } catch (err) {
+      console.error('Error deleting image:', err);
+      const errorMsg = err.message || err.response?.data?.message || 'Failed to delete image';
+      toast.error(errorMsg, { id: deleteToast });
     }
+  };
+
+  const cancelDeleteImage = () => {
+    setDeleteImageConfirm(null);
+  };
+
+  const addImageInput = (e) => {
+    // Prevent event bubbling and default behavior
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    // Use functional state update to ensure we work with latest state
+    // This prevents issues with React StrictMode double renders
+    setImageInputs((prevInputs) => {
+      // Check limits - return unchanged if limit reached
+      if (prevInputs.length >= 10) {
+        return prevInputs;
+      }
+      
+      // Generate unique index: use the current length as the next index
+      // This ensures each input gets a unique identifier
+      const newIndex = prevInputs.length;
+      
+      // Return new array with one additional input
+      return [...prevInputs, newIndex];
+    });
   };
 
   const removeImageInput = (index) => {
@@ -611,6 +687,28 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
       return;
     }
 
+    // Validate total file size before upload (client-side check)
+    const totalSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+    const maxTotalSize = 50 * 1024 * 1024; // 50MB total
+    if (totalSize > maxTotalSize) {
+      alert(`Total file size (${(totalSize / 1024 / 1024).toFixed(2)}MB) exceeds maximum allowed (50MB). Please reduce the number or size of images.`);
+      return;
+    }
+
+    // Validate each file size individually
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      const maxFileSize = 5 * 1024 * 1024; // 5MB per file
+      if (file.size > maxFileSize) {
+        alert(`Image "${file.name}" is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum file size is 5MB per image.`);
+        return;
+      }
+      if (!file.type.startsWith('image/')) {
+        alert(`File "${file.name}" is not an image. Please select an image file.`);
+        return;
+      }
+    }
+
     if (formData.shortDescription && formData.shortDescription.length > 200) {
       alert('Short description cannot exceed 200 characters');
       return;
@@ -651,16 +749,70 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
       });
 
       // Send request
-      const apiUrl = `${import.meta.env.VITE_API_BASE_URL || 'https://ozme.in/api'}/admin/products${editingProduct ? `/${editingProduct._id}` : ''}`;
+      // CRITICAL: Use www.ozme.in (not ozme.in) to match backend domain
+      const apiUrl = `${import.meta.env.VITE_API_BASE_URL || 'https://www.ozme.in/api'}/admin/products${editingProduct ? `/${editingProduct._id}` : ''}`;
+      
+      console.log('📤 Creating product:', {
+        url: apiUrl,
+        method: editingProduct ? 'PUT' : 'POST',
+        hasFiles: selectedFiles.length > 0,
+        fileCount: selectedFiles.length,
+      });
+
       const response = await fetch(apiUrl, {
         method: editingProduct ? 'PUT' : 'POST',
         headers: {
           'Authorization': `Bearer ${sessionStorage.getItem('adminToken')}`,
+          // DO NOT set Content-Type for FormData - browser will set it with boundary
         },
         body: formDataToSend,
       });
 
+      // CRITICAL: Check response content-type before parsing JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        // Response is not JSON - likely HTML error page (401, 403, 404, 413, 500)
+        const responseText = await response.text();
+        console.error('❌ Non-JSON response received:', {
+          status: response.status,
+          statusText: response.statusText,
+          contentType: contentType,
+          url: apiUrl,
+          responsePreview: responseText.substring(0, 200),
+        });
+
+        let errorMessage = `Server returned non-JSON response (HTTP ${response.status})`;
+        
+        if (response.status === 413) {
+          errorMessage = 'Request Entity Too Large (413). Image files may be too large. Maximum file size is 5MB per image.';
+        } else if (response.status === 401 || response.status === 403) {
+          errorMessage = 'Authentication failed. Please log in again.';
+          // Redirect to login
+          sessionStorage.removeItem('adminToken');
+          window.location.href = '/admin/login';
+          return;
+        } else if (response.status === 404) {
+          errorMessage = 'API endpoint not found. Check API URL configuration.';
+        } else if (responseText.includes('<html>')) {
+          errorMessage = `Server returned HTML instead of JSON (HTTP ${response.status}). This usually means the request was routed incorrectly or authentication failed. Check API URL: ${apiUrl}`;
+        }
+
+        alert(errorMessage);
+        throw new Error(errorMessage);
+      }
+
       const data = await response.json();
+
+      if (!response.ok) {
+        // HTTP error status but JSON response
+        const errorMessage = data?.message || `Failed to ${editingProduct ? 'update' : 'create'} product (HTTP ${response.status})`;
+        console.error('❌ API error:', {
+          status: response.status,
+          data: data,
+        });
+        alert(errorMessage);
+        throw new Error(errorMessage);
+      }
 
       if (data && data.success) {
         alert(`Product ${editingProduct ? 'updated' : 'created'} successfully!`);
@@ -668,11 +820,16 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
         filePreviews.forEach(url => URL.revokeObjectURL(url));
         await onSave(data.data.product);
       } else {
-        alert(data?.message || `Failed to ${editingProduct ? 'update' : 'create'} product`);
+        const errorMessage = data?.message || `Failed to ${editingProduct ? 'update' : 'create'} product`;
+        alert(errorMessage);
+        throw new Error(errorMessage);
       }
     } catch (err) {
       console.error(`Error ${editingProduct ? 'updating' : 'creating'} product:`, err);
-      alert(err.message || `Failed to ${editingProduct ? 'update' : 'create'} product`);
+      // Only show alert if not already shown above
+      if (!err.message || (!err.message.includes('Server returned') && !err.message.includes('Authentication failed'))) {
+        alert(err.message || `Failed to ${editingProduct ? 'update' : 'create'} product`);
+      }
     } finally {
       setUploadingImages(false);
     }
@@ -754,8 +911,9 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
                     type="button"
                     onClick={() => {
                       // Find the first available size that's not already used
-                      const allSizes = ['50ML', '100ML', '150ML', '200ML', '250ML', '300ML'];
-                      const usedSizes = formData.sizes.map(s => s.size);
+                      // Size #1 is always "120 ml", so exclude it from available sizes
+                      const allSizes = ['50ML', '150ML', '200ML', '250ML', '300ML'];
+                      const usedSizes = formData.sizes.map(s => s.size).filter(s => s !== '120 ml');
                       const availableSize = allSizes.find(size => !usedSizes.includes(size)) || allSizes[0];
                       
                       const newSizes = [...formData.sizes, { 
@@ -779,8 +937,9 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
                       : 0;
                     
                     // Get available sizes (exclude already used sizes except current one)
+                    // Size #1 is always "120 ml", so exclude it from dropdown options
                     const usedSizes = formData.sizes.map((s, i) => i !== index ? s.size : null).filter(Boolean);
-                    const availableSizes = ['50ML', '100ML', '150ML', '200ML', '250ML', '300ML'].filter(
+                    const availableSizes = ['50ML', '150ML', '200ML', '250ML', '300ML'].filter(
                       size => !usedSizes.includes(size) || size === sizeItem.size
                     );
 
@@ -808,19 +967,31 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
                             <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
                               Size *
                             </label>
-                            <select
-                              value={sizeItem.size}
-                              onChange={(e) => {
-                                const newSizes = [...formData.sizes];
-                                newSizes[index].size = e.target.value;
-                                setFormData({ ...formData, sizes: newSizes });
-                              }}
-                              className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-white text-sm"
-                            >
-                              {availableSizes.map(size => (
-                                <option key={size} value={size}>{size}</option>
-                              ))}
-                            </select>
+                            {index === 0 ? (
+                              // Size #1 is static "120 ml" - no dropdown
+                              <input
+                                type="text"
+                                value="120 ml"
+                                readOnly
+                                disabled
+                                className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-sm cursor-not-allowed"
+                              />
+                            ) : (
+                              // Other sizes have dropdown
+                              <select
+                                value={sizeItem.size}
+                                onChange={(e) => {
+                                  const newSizes = [...formData.sizes];
+                                  newSizes[index].size = e.target.value;
+                                  setFormData({ ...formData, sizes: newSizes });
+                                }}
+                                className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-white text-sm"
+                              >
+                                {availableSizes.map(size => (
+                                  <option key={size} value={size}>{size}</option>
+                                ))}
+                              </select>
+                            )}
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
@@ -994,6 +1165,7 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
                       onClick={addImageInput}
                       disabled={uploadingImages}
                       className="w-full px-4 py-2 text-sm font-medium text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-700 rounded-xl hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors disabled:opacity-50"
+                      aria-label="Add another image input"
                     >
                       + Add More
                     </button>
@@ -1014,6 +1186,15 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
                             <span className="absolute bottom-1 left-1 px-2 py-1 text-xs bg-blue-500 text-white rounded">
                               Existing
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteImage(editingProduct._id || editingProduct.id, image, index)}
+                              disabled={uploadingImages || formData.images.length === 1}
+                              className="absolute top-1 right-1 p-1.5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed hover:bg-red-600"
+                              title={formData.images.length === 1 ? "Cannot delete the last image" : "Delete image"}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -1069,7 +1250,7 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-6">
+        <div className="space-y-6 lg:sticky lg:top-8 lg:self-start">
           <div className="bg-white dark:bg-gray-800 rounded-2xl border border-amber-100/20 dark:border-amber-900/20 overflow-hidden shadow-sm">
             <div className="p-6 border-b border-amber-100/20 dark:border-amber-900/20">
               <h2 className="text-xl font-light text-gray-900 dark:text-white">
@@ -1108,6 +1289,49 @@ const AddProductForm = ({ onBack, editingProduct, onSave }) => {
           </div>
         </div>
       </div>
+
+      {/* Delete Image Confirmation Modal */}
+      {deleteImageConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-sm w-full mx-4 p-5 border border-amber-100/20 dark:border-amber-900/20">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+                  Delete this image?
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                  This cannot be undone.
+                </p>
+                <div className="mt-3">
+                  <img
+                    src={deleteImageConfirm.imageUrl}
+                    alt="Image to delete"
+                    className="w-full h-32 object-cover rounded-lg"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={cancelDeleteImage}
+                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-all font-medium text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteImage}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all font-medium text-sm"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

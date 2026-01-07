@@ -2,9 +2,12 @@ import 'dotenv/config'; // Must be first - loads env vars before other imports
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import connectDB, { isDBConnected } from './config/db.js';
+import connectDB, { isDBConnected, getConnectionInfo } from './config/db.js';
+import { getCloudinaryConfig } from './config/cloudinary.js';
+import { getOTPConfigStatus } from './config/otp.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { verifySMTPConnection } from './utils/sendEmail.js';
+import { bootstrapAdmin } from './utils/bootstrapAdmin.js';
 
 // Import Routes
 import authRoutes from './routes/authRoutes.js';
@@ -33,26 +36,18 @@ import paymentRoutes from './routes/paymentRoutes.js';
 import couponRoutes from './routes/couponRoutes.js';
 import reviewRoutes from './routes/reviewRoutes.js';
 import newsletterRoutes from './routes/newsletterRoutes.js';
+import feedbackRoutes from './routes/feedbackRoutes.js';
 import emailRoutes from './routes/emailRoutes.js';
 import { testEmail } from './controllers/testEmailController.js';
 
 // Load environment variables
 // dotenv is loaded via import 'dotenv/config' at top
 
-// Connect to MongoDB (non-blocking - server will start even if DB is down)
-connectDB().catch((err) => {
-  console.error('Failed to connect to MongoDB:', err.message);
-  // Server will continue to start
-});
-
-// Verify SMTP connection on startup (non-blocking)
-verifySMTPConnection().catch((err) => {
-  console.error('SMTP verification error:', err.message);
-  // Server will continue to start
-});
-
 const app = express();
 const PORT = process.env.PORT || 3002;
+
+// Trust proxy for correct IP detection behind reverse proxy (nginx)
+app.set('trust proxy', true);
 
 // Middleware
 const allowedOrigins = [
@@ -62,6 +57,7 @@ const allowedOrigins = [
   'https://www.ozme.in',
 ];
 
+// CORS configuration - must allow credentials for httpOnly cookies
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
@@ -69,21 +65,54 @@ app.use(cors({
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      callback(null, true); // Allow all origins in development
+      // In production, only allow whitelisted origins
+      if (process.env.NODE_ENV === 'production') {
+        callback(new Error('Not allowed by CORS'));
+      } else {
+        callback(null, true); // Allow all origins in development
+      }
     }
   },
-  credentials: true,
+  credentials: true, // REQUIRED for httpOnly cookies to work
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-guest-token'],
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// Raw body parser for Cashfree webhook (must be before express.json())
+// Cashfree webhook signature verification requires raw body string
+app.use('/api/payments/cashfree/webhook', express.raw({ type: 'application/json' }));
+
+// Increase body size limit for file uploads (admin product creation with images)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {
+  const dbInfo = getConnectionInfo();
+  const cloudinaryConfig = getCloudinaryConfig();
+  const otpConfigStatus = getOTPConfigStatus();
+  
   res.json({
     status: 'OK',
     message: 'OZME Backend API is running',
     database: isDBConnected() ? 'connected' : 'disconnected',
+    dbInfo: dbInfo ? {
+      host: dbInfo.host,
+      name: dbInfo.name,
+    } : null,
+    cloudinary: cloudinaryConfig.configured ? {
+      status: 'configured',
+      cloudName: cloudinaryConfig.cloudName,
+    } : {
+      status: 'not configured',
+    },
+    otp: otpConfigStatus.configured ? {
+      status: 'configured',
+      provider: otpConfigStatus.provider,
+    } : {
+      status: 'not configured',
+    },
     timestamp: new Date().toISOString(),
   });
 });
@@ -106,6 +135,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/newsletter', newsletterRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // Admin API Routes
 app.use('/api/admin/auth', adminAuthRoutes);
@@ -122,48 +152,111 @@ app.use('/api/phone', phoneRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`🚀 OZME Backend Server running on port ${PORT}`);
-  console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
-  
-  // Log email configuration (without password)
-  if (process.env.EMAIL_HOST) {
-    console.log(`📧 Email Config: ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT || 587}`);
+// Connect to MongoDB and start server
+// CRITICAL: Try to connect to DB, but start server even if connection fails
+// Mongoose buffering is disabled, so queries will fail fast instead of timing out
+const startServer = async () => {
+  // Step 1: Verify Cloudinary configuration (fail fast)
+  // Cloudinary config is loaded on import, so we just check status
+  try {
+    const cloudinaryConfig = getCloudinaryConfig();
+    if (cloudinaryConfig.configured) {
+      const apiKey = process.env.CLOUDINARY_API_KEY || '';
+      const maskedKey = apiKey ? `${apiKey.substring(0, 6)}...${apiKey.substring(apiKey.length - 4)}` : 'not set';
+      console.log('✅ Cloudinary: Configured and ready');
+      console.log(`   Cloud Name: ${cloudinaryConfig.cloudName}`);
+      console.log(`   API Key: ${maskedKey} (masked)`);
+      console.log(`   Status: Cloudinary ready for image uploads`);
+    }
+  } catch (cloudinaryError) {
+    console.error('❌ Cloudinary configuration failed on startup:', cloudinaryError.message);
+    console.error('💡 Server will start, but image uploads will fail until Cloudinary is configured');
   }
-  
-  // Log PhonePe PROD configuration (without secrets)
-  if (process.env.PHONEPE_MERCHANT_ID) {
-    console.log(`💳 PhonePe Configuration:`);
-    console.log(`   MODE: ${process.env.PHONEPE_MODE || 'NOT SET (defaults to PROD)'}`);
-    console.log(`   BASE_URL: ${process.env.PHONEPE_BASE_URL || 'https://api.phonepe.com/apis/hermes (default)'}`);
-    console.log(`   MERCHANT_ID: ${process.env.PHONEPE_MERCHANT_ID?.substring(0, 10)}...`);
-    console.log(`   CLIENT_ID: ${process.env.PHONEPE_CLIENT_ID?.substring(0, 10)}...`);
-    console.log(`   SALT_KEY: ${process.env.PHONEPE_SALT_KEY ? '✓ Set (length: ' + process.env.PHONEPE_SALT_KEY.length + ')' : '✗ NOT SET (REQUIRED for X-VERIFY signature)'}`);
-    console.log(`   SALT_INDEX: ${process.env.PHONEPE_SALT_INDEX || 'NOT SET (defaults to "1")'}`);
-    console.log(`   RETURN_URL: ${process.env.PHONEPE_RETURN_URL || 'NOT SET'}`);
-    console.log(`   CALLBACK_URL: ${process.env.PHONEPE_CALLBACK_URL || 'NOT SET'}`);
-    console.log(`   Integration Style: SDK-based (X-VERIFY uses SALT_KEY + SALT_INDEX)`);
-    
-    // Validate PROD mode
-    if (process.env.PHONEPE_MODE && process.env.PHONEPE_MODE !== 'PROD') {
-      console.error(`   ⚠️  WARNING: PHONEPE_MODE is set to "${process.env.PHONEPE_MODE}" but must be "PROD"`);
-    }
-    
-    // Validate base URL
-    const baseURL = process.env.PHONEPE_BASE_URL || 'https://api.phonepe.com/apis/hermes';
-    if (baseURL.includes('preprod') || baseURL.includes('sandbox') || baseURL.includes('testing') || baseURL.includes('mercury-uat')) {
-      console.error(`   ❌ ERROR: PHONEPE_BASE_URL contains UAT/sandbox indicators: ${baseURL}`);
-    }
-    
-    // Validate SALT_KEY is set
-    if (!process.env.PHONEPE_SALT_KEY) {
-      console.error(`   ❌ ERROR: PHONEPE_SALT_KEY is REQUIRED for X-VERIFY signature in PROD`);
-      console.error(`   Note: Even SDK-based integration uses SALT_KEY (not clientSecret) for signature`);
-    }
-  } else {
-    console.warn(`   ⚠️  PhonePe credentials not configured`);
-  }
-});
 
- // Trigger restart
+  // Step 1.5: Verify OTP configuration (fail fast)
+  try {
+    const otpConfigStatus = getOTPConfigStatus();
+    if (otpConfigStatus.configured) {
+      console.log('✅ OTP Service: Configured and ready');
+      console.log(`   Provider: ${otpConfigStatus.provider}`);
+      console.log(`   Status: OTP service ready for SMS sending`);
+    }
+  } catch (otpError) {
+    console.error('❌ OTP configuration failed on startup:', otpError.message);
+    console.error('💡 Server will start, but OTP sending will fail until OTP_API_KEY is configured');
+  }
+  
+  // Step 2: Try to connect to MongoDB (non-blocking)
+  console.log('🔄 Connecting to MongoDB...');
+  try {
+    await connectDB();
+    
+    // Step 3: Bootstrap admin user if flag is set and DB is connected
+    if (process.env.ADMIN_BOOTSTRAP === 'true' && isDBConnected()) {
+      console.log('🔄 Bootstrapping admin user...');
+      await bootstrapAdmin();
+    }
+  } catch (error) {
+    console.error('⚠️  MongoDB connection failed, but server will start anyway');
+    console.error('💡 Queries will fail fast instead of timing out (buffering disabled)');
+    console.error('💡 Please verify MongoDB Atlas IP whitelist and credentials');
+  }
+  
+  // Step 3: Start server (even if DB connection failed)
+  app.listen(PORT, () => {
+    console.log(`🚀 OZME Backend Server running on port ${PORT}`);
+    console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
+    
+    // Log email configuration (without password)
+    if (process.env.EMAIL_HOST) {
+      console.log(`📧 Email Config: ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT || 587}`);
+    }
+    
+    // Log Cashfree PROD configuration (without secrets)
+    if (process.env.CASHFREE_APP_ID) {
+      console.log(`💳 Cashfree Payment Gateway Configuration:`);
+      console.log(`   Environment: ${process.env.CASHFREE_ENV || 'PROD'}`);
+      console.log(`   BASE_URL: ${process.env.CASHFREE_BASE_URL || 'https://api.cashfree.com/pg (default)'}`);
+      console.log(`   APP_ID: ${process.env.CASHFREE_APP_ID?.substring(0, 10)}...`);
+      console.log(`   SECRET_KEY: ${process.env.CASHFREE_SECRET_KEY ? '✓ Set (length: ' + process.env.CASHFREE_SECRET_KEY.length + ')' : '✗ NOT SET'}`);
+      console.log(`   WEBHOOK_SECRET: ${process.env.CASHFREE_WEBHOOK_SECRET ? '✓ Set (length: ' + process.env.CASHFREE_WEBHOOK_SECRET.length + ')' : '✗ NOT SET'}`);
+      console.log(`   RETURN_URL: ${process.env.CASHFREE_RETURN_URL || 'NOT SET'}`);
+      console.log(`   CALLBACK_URL: ${process.env.CASHFREE_CALLBACK_URL || 'NOT SET'}`);
+      console.log(`   API Version: 2022-09-01`);
+      console.log(`   Integration Type: PG Orders API (Production)`);
+      console.log(`   Headers: x-client-id, x-client-secret, x-api-version, Content-Type`);
+      console.log(`   Webhook Auth: x-webhook-signature (HMAC SHA256)`);
+      
+      // Validate PROD mode
+      if (process.env.CASHFREE_ENV && process.env.CASHFREE_ENV !== 'PROD') {
+        console.warn(`   ⚠️  WARNING: CASHFREE_ENV is set to "${process.env.CASHFREE_ENV}" but should be "PROD"`);
+      }
+      
+      // Validate base URL
+      const baseURL = process.env.CASHFREE_BASE_URL || 'https://api.cashfree.com/pg';
+      if (baseURL.includes('sandbox') || baseURL.includes('test')) {
+        console.error(`   ❌ ERROR: CASHFREE_BASE_URL contains sandbox/test indicators: ${baseURL}`);
+      }
+      
+      // Validate credentials
+      if (!process.env.CASHFREE_SECRET_KEY) {
+        console.error(`   ❌ ERROR: CASHFREE_SECRET_KEY is REQUIRED for PROD integration`);
+      }
+      
+      if (!process.env.CASHFREE_WEBHOOK_SECRET) {
+        console.warn(`   ⚠️  WARNING: CASHFREE_WEBHOOK_SECRET not set - webhook signature verification disabled`);
+      }
+    } else {
+      console.warn(`   ⚠️  Cashfree credentials not configured`);
+    }
+  });
+};
+
+// Start the server
+startServer();
+
+// Verify SMTP connection on startup (non-blocking)
+verifySMTPConnection().catch((err) => {
+  console.error('SMTP verification error:', err.message);
+  // Server will continue to start
+});

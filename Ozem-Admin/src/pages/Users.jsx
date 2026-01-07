@@ -1,4 +1,4 @@
-import { Eye, Search, Filter, User, ShoppingBag, DollarSign, Calendar, Loader2, RefreshCw, AlertCircle, ArrowLeft, Package, MapPin, Heart } from 'lucide-react';
+import { Eye, Search, Filter, User, ShoppingBag, DollarSign, Calendar, Loader2, RefreshCw, AlertCircle, ArrowLeft, Package, MapPin, Heart, LogIn } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiRequest } from '../utils/api';
@@ -118,6 +118,43 @@ const Users = () => {
     });
   };
 
+  const formatDateTime = (dateString) => {
+    if (!dateString) return '—';
+    return new Date(dateString).toLocaleString('en-IN', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+
+  const getLoginMethodBadge = (method) => {
+    if (!method) return <span className="text-gray-400">—</span>;
+    const badges = {
+      otp: <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400">OTP</span>,
+      google: <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400">Google</span>,
+      email: <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400">Email</span>,
+    };
+    return badges[method] || <span className="text-gray-400">—</span>;
+  };
+
+  const getAuthProvidersBadge = (providers) => {
+    if (!providers || !Array.isArray(providers) || providers.length === 0) {
+      return <span className="text-gray-400">—</span>;
+    }
+    return (
+      <div className="flex items-center gap-1 flex-wrap">
+        {providers.map((provider, idx) => (
+          <span key={idx} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+            {provider === 'otp' ? 'OTP' : provider === 'google' ? 'Google' : provider === 'email' ? 'Email' : provider}
+          </span>
+        ))}
+      </div>
+    );
+  };
+
   const formatCurrency = (amount) => {
     return `₹${(amount || 0).toLocaleString('en-IN')}`;
   };
@@ -185,6 +222,46 @@ const Users = () => {
               <div className="flex justify-between py-3">
                 <span className="text-gray-500">Total Spent</span>
                 <span className="font-bold text-lg text-emerald-600">{formatCurrency(user.totalSpent)}</span>
+              </div>
+              {/* Login Audit Info */}
+              <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-700">
+                <h3 className="font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+                  <Calendar className="w-4 h-4" /> Login Information
+                </h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between py-2">
+                    <span className="text-gray-500 text-sm">Last Login</span>
+                    <span className="font-medium text-gray-900 dark:text-white text-sm">
+                      {formatDateTime(user.lastLoginAt)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-2">
+                    <span className="text-gray-500 text-sm">Login Methods</span>
+                    <div>{getAuthProvidersBadge(user.authProviders)}</div>
+                  </div>
+                  {user.authProviders && user.authProviders.length > 1 && (
+                    <div className="mt-2 px-3 py-1 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                      <span className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                        <LogIn className="w-3 h-3" />
+                        Linked account
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between py-2">
+                    <span className="text-gray-500 text-sm">Signed In With</span>
+                    <span className="font-medium text-gray-900 dark:text-white text-sm">
+                      {user.lastLoginIdentifier || '—'}
+                    </span>
+                  </div>
+                  {user.lastLoginIp && (
+                    <div className="flex justify-between py-2">
+                      <span className="text-gray-500 text-sm">IP Address</span>
+                      <span className="font-mono text-xs text-gray-600 dark:text-gray-400">
+                        {user.lastLoginIp}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -420,6 +497,9 @@ const Users = () => {
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">User</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Email</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Phone</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Last Login</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Login Method</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Signed In With</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Total Orders</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Total Spent</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Joined</th>
@@ -452,6 +532,19 @@ const Users = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
                       {user.phone || '-'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
+                      {formatDateTime(user.lastLoginAt)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {getAuthProvidersBadge(user.authProviders)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
+                      {user.lastLoginIdentifier ? (
+                        <span className="font-medium">{user.lastLoginIdentifier}</span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
                       {user.totalOrders}

@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { apiRequest } from '../utils/api';
+import { useCart } from '../context/CartContext';
 
 export default function CheckoutSuccess() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
+    const { clearCart } = useCart();
     const [status, setStatus] = useState('verifying'); // 'verifying', 'success', 'error'
     const [message, setMessage] = useState('Verifying your payment...');
     const [orderId, setOrderId] = useState(null);
@@ -13,7 +15,7 @@ export default function CheckoutSuccess() {
     useEffect(() => {
         const processPaymentSuccess = async () => {
             try {
-                // Step 1: Get order_id from URL query params (PhonePe uses order_id)
+                // Step 1: Get order_id from URL query params (Cashfree uses order_id)
                 // Also check for orderId (alternative format)
                 let orderIdFromUrl = searchParams.get('order_id') || searchParams.get('orderId') || searchParams.get('id');
                 
@@ -60,42 +62,73 @@ export default function CheckoutSuccess() {
                 localStorage.setItem('lastOrderId', orderIdFromUrl);
 
                 // Step 4: Verify payment status BEFORE showing success
-                // This ensures we confirm payment with PhonePe before redirecting
+                // This ensures we confirm payment with Cashfree before redirecting
                 setStatus('verifying');
                 setMessage('Verifying payment status...');
                 
                 try {
-                    // First, get order to find merchantTransactionId
+                    // Get order to check payment status
                     const orderResponse = await apiRequest(`/orders/${orderIdFromUrl}`);
-                    const merchantTransactionId = orderResponse?.data?.order?.merchantTransactionId;
+                    const order = orderResponse?.data?.order;
                     
-                    if (merchantTransactionId) {
-                        // Use new status endpoint with merchantTransactionId
-                        console.log('🔍 Verifying payment status with merchantTransactionId:', merchantTransactionId);
-                        const statusResponse = await apiRequest(`/payments/phonepe/status/${merchantTransactionId}`);
+                    if (order) {
+                        // Check payment status from order
+                        console.log('🔍 Verifying payment status:', {
+                            orderId: orderIdFromUrl,
+                            paymentStatus: order.paymentStatus,
+                            orderStatus: order.orderStatus,
+                        });
                         
-                        if (statusResponse && statusResponse.success) {
-                            console.log('✅ Payment status verified:', {
-                                state: statusResponse.data?.state,
-                                paymentStatus: statusResponse.data?.paymentStatus,
-                                orderStatus: statusResponse.data?.orderStatus,
-                                orderUpdated: statusResponse.data?.orderUpdated,
-                            });
-                            
-                            // If payment failed, show error
-                            if (statusResponse.data?.state === 'FAILED' || statusResponse.data?.paymentStatus === 'Failed') {
-                                setStatus('error');
-                                setMessage('Payment failed. Please try again.');
-                                setTimeout(() => {
-                                    navigate('/track-order', { replace: true });
-                                }, 3000);
-                                return;
+                        // If payment failed, show error
+                        if (order.paymentStatus === 'Failed') {
+                            setStatus('error');
+                            setMessage('Payment failed. Please try again.');
+                            setTimeout(() => {
+                                navigate('/track-order', { replace: true });
+                            }, 3000);
+                            return;
+                        }
+                        
+                        // If payment is pending, verify with Cashfree status API
+                        if (order.paymentStatus === 'Pending') {
+                            try {
+                                const statusResponse = await apiRequest(`/payments/cashfree/status/${orderIdFromUrl}`);
+                                if (statusResponse && statusResponse.success) {
+                                    console.log('✅ Payment status verified:', {
+                                        paymentStatus: statusResponse.data?.paymentStatus,
+                                        orderStatus: statusResponse.data?.orderStatus,
+                                    });
+                                    
+                                    if (statusResponse.data?.paymentStatus === 'Failed') {
+                                        setStatus('error');
+                                        setMessage('Payment failed. Please try again.');
+                                        setTimeout(() => {
+                                            navigate('/track-order', { replace: true });
+                                        }, 3000);
+                                        return;
+                                    }
+                                }
+                            } catch (statusError) {
+                                // Non-critical - webhook will update status
+                                console.warn('⚠️ Payment status check error (non-critical):', statusError);
                             }
                         }
-                    } else {
-                        // Fallback to verify endpoint if merchantTransactionId not found
-                        console.log('⚠️ merchantTransactionId not found, using verify endpoint');
-                        await apiRequest(`/payments/phonepe/verify/${orderIdFromUrl}`);
+                        
+                        // Clear cart ONLY after payment is confirmed (Paid status)
+                        if (order.paymentStatus === 'Paid' || order.orderStatus === 'Processing') {
+                            try {
+                                clearCart();
+                                localStorage.removeItem('cart');
+                                localStorage.removeItem('cartItems');
+                                localStorage.removeItem('guestCart');
+                                // Clear buyNowItem if it exists
+                                sessionStorage.removeItem('buyNowItem');
+                                localStorage.removeItem('buyNowItem');
+                                console.log('✅ Cart and buyNowItem cleared after successful payment confirmation');
+                            } catch (cartError) {
+                                console.warn('⚠️ Error clearing cart:', cartError);
+                            }
+                        }
                     }
                 } catch (verifyError) {
                     // Non-critical - payment might be processed via webhook

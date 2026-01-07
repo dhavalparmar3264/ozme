@@ -14,8 +14,11 @@ export const getAdminUsers = async (req, res) => {
     const search = req.query.search || '';
     const status = req.query.status || '';
 
-    // Build query - only get regular users, not admins
-    const query = { role: 'user' };
+    // Build query - only get regular users, not admins, and exclude merged accounts
+    const query = { 
+      role: 'user',
+      accountStatus: { $ne: 'merged' }, // Exclude merged accounts
+    };
     
     if (search) {
       query.$or = [
@@ -69,6 +72,15 @@ export const getAdminUsers = async (req, res) => {
           status: 'Active', // All users are active by default
           created: user.createdAt,
           createdAt: user.createdAt,
+          // Login audit fields
+          lastLoginAt: user.lastLoginAt || null,
+          lastLoginMethod: user.lastLoginMethod || null,
+          lastLoginIdentifier: user.lastLoginIdentifier || null,
+          lastLoginIp: user.lastLoginIp || null,
+          lastLoginUserAgent: user.lastLoginUserAgent || null,
+          // Account linking fields
+          authProviders: user.authProviders || [],
+          accountStatus: user.accountStatus || 'active',
           totalOrders: orderStats[0]?.totalOrders || 0,
           totalSpent: orderStats[0]?.totalSpent || 0,
           wishlistCount,
@@ -176,6 +188,15 @@ export const getAdminUser = async (req, res) => {
           created: user.createdAt,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
+          // Login audit fields
+          lastLoginAt: user.lastLoginAt || null,
+          lastLoginMethod: user.lastLoginMethod || null,
+          lastLoginIdentifier: user.lastLoginIdentifier || null,
+          lastLoginIp: user.lastLoginIp || null,
+          lastLoginUserAgent: user.lastLoginUserAgent || null,
+          // Account linking fields
+          authProviders: user.authProviders || [],
+          accountStatus: user.accountStatus || 'active',
           totalOrders: orderStats[0]?.totalOrders || 0,
           totalSpent: orderStats[0]?.totalSpent || 0,
           addresses: user.addresses || [],

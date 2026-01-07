@@ -11,18 +11,18 @@ import crypto from 'crypto';
  */
 const getPhonePeConfig = () => {
   const merchantId = process.env.PHONEPE_MERCHANT_ID;
-  const clientId = process.env.PHONEPE_CLIENT_ID;
-  const clientSecret = process.env.PHONEPE_CLIENT_SECRET;
-  const clientVersion = process.env.PHONEPE_CLIENT_VERSION || '1';
   
-  // CRITICAL: SALT_KEY and SALT_INDEX are REQUIRED for X-VERIFY signature in PROD
-  // Even SDK-based integration uses SALT_KEY (not clientSecret) for signature
+  // CRITICAL: SALT_KEY and SALT_INDEX are REQUIRED for Pay Page (Checksum/Salt) integration
+  // Pay Page integration uses SALT_KEY for X-VERIFY signature (NOT CLIENT_SECRET)
+  // OAuth/CLIENT_SECRET is NOT used for Pay Page integration
   const saltKey = process.env.PHONEPE_SALT_KEY;
   const saltIndex = process.env.PHONEPE_SALT_INDEX || '1';
   
   // CRITICAL: Use PROD base URL from env, NEVER default to UAT
-  // PhonePe PROD endpoint: https://api.phonepe.com/apis/hermes
-  // PhonePe UAT endpoint: https://api-preprod.phonepe.com/apis/pg-sandbox (DO NOT USE)
+  // PhonePe PROD base URL options:
+  // - https://api.phonepe.com/apis/hermes (Hermes API)
+  // - https://api.phonepe.com/apis/pg-sandbox (UAT - DO NOT USE)
+  // For Pay Page integration, endpoint is: /pg/v1/pay
   const baseURL = process.env.PHONEPE_BASE_URL || 'https://api.phonepe.com/apis/hermes';
   const mode = process.env.PHONEPE_MODE || 'PROD';
 
@@ -44,16 +44,23 @@ const getPhonePeConfig = () => {
     );
   }
 
-  if (!merchantId || !clientId || !clientSecret) {
+  if (!merchantId) {
     throw new Error(
-      'PhonePe PROD credentials not configured. Please set PHONEPE_MERCHANT_ID, PHONEPE_CLIENT_ID, and PHONEPE_CLIENT_SECRET in your .env file.'
+      'PhonePe PROD MERCHANT_ID not configured. Please set PHONEPE_MERCHANT_ID in your .env file.'
     );
   }
 
-  // CRITICAL: SALT_KEY is REQUIRED for X-VERIFY signature (even in SDK-based integration)
+  // CRITICAL: SALT_KEY and SALT_INDEX are REQUIRED for Pay Page integration
+  // Payment initiation MUST fail if these are missing
   if (!saltKey) {
     throw new Error(
-      'PhonePe PROD SALT_KEY not configured. Please set PHONEPE_SALT_KEY in your .env file. This is REQUIRED for X-VERIFY signature generation in PROD.'
+      'PhonePe PROD SALT_KEY is REQUIRED but not configured. Please set PHONEPE_SALT_KEY in your .env file. Payment initiation cannot proceed without SALT_KEY.'
+    );
+  }
+
+  if (!saltIndex) {
+    throw new Error(
+      'PhonePe PROD SALT_INDEX is REQUIRED but not configured. Please set PHONEPE_SALT_INDEX in your .env file. Payment initiation cannot proceed without SALT_INDEX.'
     );
   }
 
@@ -88,22 +95,19 @@ const getPhonePeConfig = () => {
     console.warn('   Got:', baseURL);
   }
 
-  console.log('🔧 PhonePe PROD Configuration:', {
+  console.log('🔧 PhonePe PROD Configuration (Pay Page - Checksum/Salt):', {
     mode: 'PROD',
     baseURL,
     merchantId: merchantId?.substring(0, 10) + '...',
-    clientId: clientId?.substring(0, 10) + '...',
-    clientVersion,
-    hasSaltKey: !!saltKey,
-    saltIndex,
-    integrationStyle: 'Pay Page (Checksum/Salt flow - X-VERIFY uses SALT_KEY + SALT_INDEX, X-MERCHANT-ID header)',
+    saltKeyLength: saltKey?.length || 0,
+    saltIndex: saltIndex,
+    integrationType: 'Pay Page (Checksum/Salt flow)',
+    signatureFormat: 'sha256(base64Payload + endpoint + SALT_KEY) + "###" + SALT_INDEX',
+    headers: ['Content-Type', 'Accept', 'X-VERIFY', 'X-MERCHANT-ID'],
   });
 
   return {
     merchantId,
-    clientId,
-    clientSecret,
-    clientVersion,
     saltKey,
     saltIndex,
     baseURL,
@@ -112,11 +116,11 @@ const getPhonePeConfig = () => {
 };
 
 /**
- * Generate X-VERIFY signature for PhonePe API (PROD)
- * CRITICAL: Even SDK-based integration uses SALT_KEY (not clientSecret) for signature
+ * Generate X-VERIFY signature for PhonePe Pay Page API (PROD)
+ * Pay Page integration uses Checksum/Salt flow (NOT OAuth)
  * Signature format: sha256(base64Payload + endpoint + SALT_KEY) + "###" + SALT_INDEX
  * @param {string} base64Payload - Base64 encoded payload
- * @param {string} endpoint - API endpoint path
+ * @param {string} endpoint - API endpoint path (must be exact, e.g., "/pg/v1/pay")
  * @returns {string} X-VERIFY signature
  */
 const generateXVerifySignature = (base64Payload, endpoint) => {
@@ -125,20 +129,23 @@ const generateXVerifySignature = (base64Payload, endpoint) => {
   // CRITICAL: Verify SALT_KEY exists
   if (!config.saltKey) {
     console.error('❌ CRITICAL: SALT_KEY is missing in generateXVerifySignature!');
-    console.error('   This will cause invalid signature and PhonePe will return UAT URLs.');
+    console.error('   This will cause invalid signature and PhonePe will return 404.');
     throw new Error('PhonePe SALT_KEY not configured. Please set PHONEPE_SALT_KEY in .env file.');
   }
   
-  // CRITICAL: Use SALT_KEY (not clientSecret) for signature hash
-  // This is the correct format for PhonePe PROD API
-  const stringToHash = base64Payload + endpoint + config.saltKey;
+  // Normalize endpoint path (ensure no trailing slash, correct format)
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  
+  // CRITICAL: Pay Page integration uses SALT_KEY for signature hash (NOT CLIENT_SECRET)
+  // Signature: sha256(base64Payload + endpoint + SALT_KEY) + "###" + SALT_INDEX
+  const stringToHash = base64Payload + normalizedEndpoint + config.saltKey;
   const sha256Hash = crypto.createHash('sha256').update(stringToHash).digest('hex');
   
-  // Use SALT_INDEX (not clientVersion) in signature
+  // Append SALT_INDEX to signature
   const signature = `${sha256Hash}###${config.saltIndex}`;
   
   console.log('🔐 X-VERIFY Signature Generated:', {
-    endpoint,
+    endpoint: normalizedEndpoint,
     saltKeyLength: config.saltKey?.length || 0,
     saltIndex: config.saltIndex,
     signatureLength: signature.length,
@@ -152,7 +159,8 @@ const generateXVerifySignature = (base64Payload, endpoint) => {
 };
 
 /**
- * Create PhonePe payment using SDK-based approach
+ * Create PhonePe payment using Pay Page (Checksum/Salt) integration
+ * Pay Page integration - NO OAuth required, uses SALT_KEY for signature
  * @param {Object} params - Payment parameters
  * @param {string} params.merchantTransactionId - Unique merchant transaction ID
  * @param {number} params.amountPaise - Amount in paise
@@ -174,13 +182,14 @@ export const createPhonePePayment = async ({
     const config = getPhonePeConfig();
 
     // DEBUG: Log environment variables (NO secrets)
-    console.log('🔍 DEBUG: PhonePe Payment Creation:', {
+    console.log('🔍 DEBUG: PhonePe Payment Creation (Pay Page):', {
       PHONEPE_MODE: process.env.PHONEPE_MODE || 'NOT SET',
       PHONEPE_BASE_URL: process.env.PHONEPE_BASE_URL || 'NOT SET (using default)',
       baseURL: config.baseURL,
       merchantId: config.merchantId?.substring(0, 10) + '...',
-      clientId: config.clientId?.substring(0, 10) + '...',
-      integrationStyle: 'Pay Page (Checksum/Salt flow - X-VERIFY + X-MERCHANT-ID)',
+      saltKeyLength: config.saltKey?.length || 0,
+      saltIndex: config.saltIndex,
+      integrationType: 'Pay Page (Checksum/Salt flow)',
     });
 
     // Build request payload for SDK-based API
@@ -200,7 +209,8 @@ export const createPhonePePayment = async ({
     // Base64 encode payload
     const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64');
 
-    // Generate X-VERIFY signature (SDK-based integration)
+    // Generate X-VERIFY signature for Pay Page integration
+    // Endpoint must be exactly "/pg/v1/pay" (no trailing slash)
     const endpoint = '/pg/v1/pay';
     const xVerify = generateXVerifySignature(base64Payload, endpoint);
 
@@ -237,13 +247,12 @@ export const createPhonePePayment = async ({
       throw new Error('PhonePe API URL is not production. Check PHONEPE_BASE_URL and PHONEPE_MODE in .env file.');
     }
     
-    console.log('📡 PhonePe PROD API Request:', {
+    console.log('📡 PhonePe PROD API Request (Pay Page):', {
       url: fullUrl,
       method: 'POST',
       environment: 'PROD',
       baseURL: config.baseURL,
       merchantId: config.merchantId?.substring(0, 10) + '...',
-      clientId: config.clientId?.substring(0, 10) + '...',
       amountPaise,
       merchantTransactionId,
       redirectUrl: redirectUrl.substring(0, 80) + '...',
@@ -283,29 +292,23 @@ export const createPhonePePayment = async ({
       signatureSuffix: xVerify.substring(xVerify.length - 10),
     };
     
-    console.log('📤 PhonePe Request Details (Headers):', {
+    console.log('📤 PhonePe Request Headers (Pay Page):', {
       url: fullUrl,
       method: 'POST',
       headers: {
-        'Content-Type': requestHeaders['Content-Type'],
-        'Accept': requestHeaders['Accept'],
-        'X-VERIFY': xVerify.substring(0, 30) + '... (full length: ' + xVerify.length + ')',
-        'X-MERCHANT-ID': config.merchantId,  // Pay Page uses X-MERCHANT-ID
-        'X-VERIFY-Format': 'sha256(base64Payload + endpoint + SALT_KEY) + "###" + SALT_INDEX',
-        'X-VERIFY-SaltIndex': config.saltIndex,
-        integrationType: 'Pay Page (Checksum/Salt flow)',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-VERIFY': xVerify.substring(0, 30) + '... (length: ' + xVerify.length + ')',
+        'X-MERCHANT-ID': config.merchantId,
       },
-      payloadLength: base64Payload.length,
-      merchantId: config.merchantId,
-      merchantTransactionId,
-      signatureDetails: signatureDebugInfo,
-      configCheck: {
-        hasSaltKey: !!config.saltKey,
+      signatureDetails: {
+        endpoint: endpoint,
         saltKeyLength: config.saltKey?.length || 0,
         saltIndex: config.saltIndex,
-        merchantId: config.merchantId?.substring(0, 10) + '...',
-        clientId: config.clientId?.substring(0, 10) + '...',
+        signatureFormat: 'sha256(base64Payload + endpoint + SALT_KEY) + "###" + SALT_INDEX',
       },
+      merchantId: config.merchantId,
+      merchantTransactionId,
     });
 
     const response = await fetch(fullUrl, {
@@ -335,6 +338,37 @@ export const createPhonePePayment = async ({
 
     if (!response.ok) {
       const errorMessage = responseData?.message || responseData?.error || responseData?.code || responseData?.rawResponse || `HTTP ${response.status}`;
+      
+      // Enhanced error logging for 404 specifically
+      if (response.status === 404) {
+        console.error('❌ PhonePe API returned 404 - Endpoint not found:', {
+          status: response.status,
+          url: fullUrl,
+          endpoint: endpoint,
+          baseURL: config.baseURL,
+          merchantId: config.merchantId,
+          error: errorMessage,
+          fullResponse: responseData,
+          responseText: responseText.substring(0, 500),
+        });
+        console.error('🔍 404 Error Diagnostics:');
+        console.error('   Possible causes:');
+        console.error('   1. Endpoint path incorrect - verify: /pg/v1/pay');
+        console.error('   2. Merchant ID invalid or not activated for PROD');
+        console.error('   3. SALT_KEY incorrect - signature validation failed');
+        console.error('   4. Base URL incorrect - should be: https://api.phonepe.com/apis/hermes');
+        console.error('   Current configuration:');
+        console.error('   - Base URL:', config.baseURL);
+        console.error('   - Endpoint:', endpoint);
+        console.error('   - Full URL:', fullUrl);
+        console.error('   - Merchant ID:', config.merchantId);
+        console.error('   - SALT_KEY length:', config.saltKey?.length || 0);
+        console.error('   - SALT_INDEX:', config.saltIndex);
+        console.error('   Action: Verify SALT_KEY matches PhonePe dashboard PROD credentials');
+        console.error('   Action: Verify merchant account is activated for PROD');
+        console.error('   Action: Contact PhonePe support if credentials are correct');
+      }
+      
       console.error('❌ PhonePe payment creation failed:', {
         status: response.status,
         statusText: response.statusText,
@@ -344,7 +378,6 @@ export const createPhonePePayment = async ({
         responseText: responseText.substring(0, 1000),
         requestPayload: {
           merchantId: config.merchantId,
-          clientId: config.clientId,
           merchantTransactionId,
           amountPaise,
           base64PayloadLength: base64Payload.length,
@@ -360,10 +393,19 @@ export const createPhonePePayment = async ({
         },
         headersSent: {
           'X-VERIFY': xVerify.substring(0, 30) + '...',
-          'X-CLIENT-ID': config.clientId,
+          'X-MERCHANT-ID': config.merchantId,
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
       });
+      
+      // Provide clear error message for 404
+      if (response.status === 404) {
+        const errorMsg = `PhonePe API returned 404. Possible causes: 1) SALT_KEY incorrect - verify it matches PhonePe dashboard PROD credentials, 2) Merchant account not activated for PROD, 3) Endpoint path incorrect. URL: ${fullUrl}`;
+        console.error('❌ PhonePe 404 Error:', errorMsg);
+        throw new Error(errorMsg);
+      }
+      
       throw new Error(`Failed to create PhonePe payment: ${errorMessage}`);
     }
 
@@ -552,54 +594,17 @@ export const createPhonePePayment = async ({
 };
 
 /**
- * Verify PhonePe callback/webhook signature
- * @param {Object} callbackBody - Callback payload from PhonePe
- * @param {string} xVerifyHeader - X-VERIFY header from request
- * @returns {boolean} True if signature is valid
+ * DEPRECATED: Callback signature verification
+ * 
+ * NOTE: We now use status API as source of truth instead of signature verification.
+ * This function is kept for backward compatibility but is no longer used.
+ * 
+ * @deprecated Use getPhonePeStatus() instead for reliable payment status
  */
 export const verifyPhonePeCallback = (callbackBody, xVerifyHeader) => {
-  try {
-    const config = getPhonePeConfig();
-
-    if (!xVerifyHeader) {
-      console.warn('⚠️  X-VERIFY header missing in PhonePe callback');
-      return false;
-    }
-
-    // Extract base64 payload from callback
-    const base64Payload = callbackBody?.request || callbackBody?.response;
-    if (!base64Payload) {
-      console.error('❌ PhonePe callback missing request/response field');
-      return false;
-    }
-
-    // Decode payload to get merchantTransactionId
-    const decodedPayload = JSON.parse(Buffer.from(base64Payload, 'base64').toString());
-    const merchantTransactionId = decodedPayload?.merchantTransactionId || decodedPayload?.data?.merchantTransactionId;
-    
-    if (!merchantTransactionId) {
-      console.error('❌ PhonePe callback missing merchantTransactionId');
-      return false;
-    }
-
-    // Reconstruct endpoint for verification
-    const endpoint = `/pg/v1/status/${config.merchantId}/${merchantTransactionId}`;
-    const expectedSignature = generateXVerifySignature(base64Payload, endpoint);
-
-    const isValid = xVerifyHeader === expectedSignature;
-
-    if (!isValid) {
-      console.error('❌ PhonePe callback signature verification failed:', {
-        received: xVerifyHeader.substring(0, 20) + '...',
-        expected: expectedSignature.substring(0, 20) + '...',
-      });
-    }
-
-    return isValid;
-  } catch (error) {
-    console.error('PhonePe callback verification error:', error);
-    return false;
-  }
+  console.warn('⚠️  verifyPhonePeCallback is deprecated. Using status API as source of truth.');
+  // Always return true to allow callback processing, but status API will verify
+  return true;
 };
 
 /**
@@ -622,15 +627,15 @@ export const getPhonePeStatus = async (merchantTransactionId) => {
     const endpoint = `/pg/v1/status/${config.merchantId}/${merchantTransactionId}`;
     const xVerify = generateXVerifySignature(base64Payload, endpoint);
 
-    // Make API request
-    // Pay Page integration uses X-MERCHANT-ID (not X-CLIENT-ID)
+    // Make API request - Pay Page integration uses X-MERCHANT-ID (NOT X-CLIENT-ID)
+    // Endpoint must be exactly "/pg/v1/status/{merchantId}/{merchantTransactionId}"
     const response = await fetch(`${config.baseURL}${endpoint}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
         'X-VERIFY': xVerify,
-        'X-MERCHANT-ID': config.merchantId,  // Pay Page uses X-MERCHANT-ID
+        'X-MERCHANT-ID': config.merchantId,
       },
     });
 

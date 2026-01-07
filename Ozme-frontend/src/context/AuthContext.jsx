@@ -6,57 +6,208 @@ import { apiRequest } from '../utils/api.js';
 // Import Firebase (will be null if not configured)
 import { auth, googleProvider } from '../firebase.js';
 
-// Import Firebase Auth functions conditionally
-let signInWithPopup = null;
-if (auth && googleProvider) {
-  try {
-    // Dynamic import to avoid errors if Firebase is not installed
-    import('firebase/auth').then((firebaseAuth) => {
-      signInWithPopup = firebaseAuth.signInWithPopup;
-    }).catch(() => {
-      // Firebase auth not available
-    });
-  } catch (error) {
-    // Ignore
-  }
-}
+// Import Firebase Auth functions (proper imports, no dynamic imports)
+// Note: authStateReady may not exist in older Firebase versions, use onAuthStateChanged instead
+import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
+
+  /**
+   * Sync Firebase auth with backend
+   * Called when Firebase auth state changes (e.g., on refresh)
+   */
+  const syncFirebaseAuthWithBackend = async (firebaseUser) => {
+    if (!firebaseUser) {
+      return null;
+    }
+
+    try {
+      // Get Firebase ID token
+      const idToken = await firebaseUser.getIdToken();
+      
+      // Call backend to sync/create session
+      const response = await apiRequest('/auth/google', {
+        method: 'POST',
+        body: JSON.stringify({
+          idToken: idToken,
+          email: firebaseUser.email,
+          name: firebaseUser.displayName,
+          photoURL: firebaseUser.photoURL,
+        }),
+      });
+
+      if (response && response.success) {
+        // Backend session created/restored via httpOnly cookie
+        // DO NOT store token in localStorage - use httpOnly cookie only
+        
+        // Set user from backend response
+        const userData = response.data.user || {
+          id: firebaseUser.uid,
+          name: firebaseUser.displayName,
+          email: firebaseUser.email,
+          photoURL: firebaseUser.photoURL,
+        };
+        
+        if (!userData.photoURL && firebaseUser.photoURL) {
+          userData.photoURL = firebaseUser.photoURL;
+        }
+        
+        setUser(userData);
+        return userData;
+      }
+    } catch (error) {
+      // CRITICAL: Handle 502/offline errors gracefully - don't redirect to login
+      const is502 = error.response?.status === 502 || 
+                   error.message?.includes('502') ||
+                   error.message?.includes('Bad Gateway');
+      const isOffline = error.errorCode === 'BACKEND_OFFLINE' || 
+                       error.isOffline ||
+                       error.message?.includes('Failed to fetch') ||
+                       error.message?.includes('NetworkError');
+      
+      if (is502 || isOffline) {
+        console.warn('[AuthContext] Backend unavailable during sync (502/offline) - using Firebase only:', error);
+        // Use Firebase user data directly (backend unavailable)
+        const userData = {
+          id: firebaseUser.uid,
+          name: firebaseUser.displayName,
+          email: firebaseUser.email,
+          photoURL: firebaseUser.photoURL || null,
+        };
+        setUser(userData);
+        return userData; // Return user data - don't redirect
+      }
+      
+      console.warn('Failed to sync Firebase auth with backend:', error);
+      // Fallback: use Firebase user data directly
+      const userData = {
+        id: firebaseUser.uid,
+        name: firebaseUser.displayName,
+        email: firebaseUser.email,
+        photoURL: firebaseUser.photoURL || null,
+      };
+      setUser(userData);
+      return userData;
+    }
+    
+    return null;
+  };
 
   /**
    * Check authentication status on app load
+   * CRITICAL: Wait for Firebase auth to initialize, then check both Firebase and backend cookie
+   * Backend httpOnly cookie is the source of truth - no localStorage token storage
    */
   const checkAuth = async () => {
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        setLoading(false);
-        return;
-      }
-
-      const response = await apiRequest('/auth/me');
-      if (response && response.success) {
-        setUser(response.data.user);
-        // Token is already in localStorage, no need to set again
+      // Step 1: Wait for Firebase auth to initialize (if Firebase is configured)
+      if (auth) {
+        try {
+          // Wait for Firebase auth state to be ready using onAuthStateChanged
+          // This ensures persistence is restored before checking auth state
+          await new Promise((resolve) => {
+            const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+              unsubscribe(); // Only listen once
+              resolve(firebaseUser);
+            });
+            
+            // Timeout after 3 seconds if Firebase doesn't respond
+            setTimeout(() => {
+              unsubscribe();
+              resolve(null);
+            }, 3000);
+          });
+          
+          setAuthReady(true);
+          
+          // Check current Firebase user
+          const currentFirebaseUser = auth.currentUser;
+          
+          if (currentFirebaseUser) {
+            // Firebase user is logged in - sync with backend to restore session
+            console.log('🔄 Firebase user found, syncing with backend...');
+            const userData = await syncFirebaseAuthWithBackend(currentFirebaseUser);
+            setLoading(false);
+            return userData || null;
+          }
+        } catch (firebaseError) {
+          console.warn('Firebase auth initialization error:', firebaseError);
+          setAuthReady(true); // Mark as ready even if Firebase fails
+          // Continue to backend check if Firebase fails
+        }
       } else {
-        // Invalid token or backend unavailable
-        localStorage.removeItem('token');
-        setUser(null);
+        setAuthReady(true); // No Firebase, mark as ready immediately
+      }
+      
+      // Step 2: Check backend cookie (for regular login or if no Firebase user)
+      // Backend httpOnly cookie is the source of truth
+      const response = await apiRequest('/auth/me');
+      
+      if (response && response.success) {
+        // User is authenticated via backend httpOnly cookie
+        const userData = response.data.user;
+        
+        // Normalize verification fields: phoneVerified is single source of truth
+        if (userData.isPhoneVerified !== undefined && userData.phoneVerified === undefined) {
+          userData.phoneVerified = userData.isPhoneVerified;
+        }
+        if (userData.phoneVerified !== undefined) {
+          userData.isPhoneVerified = userData.phoneVerified; // Alias for compatibility
+        }
+        
+        // Debug: Log verification status from backend (temporary)
+        console.log('[AuthContext] checkAuth - phoneVerified:', userData?.phoneVerified, 'isPhoneVerified:', userData?.isPhoneVerified, 'phone:', userData?.phone);
+        
+        setUser(userData);
+        // DO NOT store token in localStorage - cookie is source of truth
+        return userData; // Return user data for immediate use
+      } else if (response && (response.errorCode === 'BACKEND_OFFLINE' || response.isOffline || response.status === 502)) {
+        // Backend is offline (502) - don't clear user state, allow Firebase-only auth
+        console.warn('[AuthContext] Backend offline during checkAuth (502) - preserving Firebase auth state');
+        // Return null but don't clear user state (let Firebase auth handle it)
+        // This prevents redirect loop when backend is down
+        return null;
+      } else {
+        // Not authenticated - clear any stale state
+        // CRITICAL: Only clear if backend explicitly says no session (not if backend is offline)
+        if (response && response.errorCode !== 'BACKEND_OFFLINE' && !response.isOffline && response.status !== 502) {
+          setUser(null);
+        }
+        return null;
       }
     } catch (error) {
-      // If backend is unreachable, keep token but don't set user
-      // This allows offline functionality
-      if (error.message && error.message.includes('Failed to fetch')) {
-        console.warn('Backend unreachable during auth check');
-        // Keep token for when backend comes back online
-      } else {
-        // Invalid token or other error
-        localStorage.removeItem('token');
+      // CRITICAL: Handle 502/offline errors gracefully - don't clear user state
+      const is502 = error.response?.status === 502 || 
+                   error.message?.includes('502') ||
+                   error.message?.includes('Bad Gateway');
+      const isOffline = error.errorCode === 'BACKEND_OFFLINE' || 
+                       error.isOffline ||
+                       error.message?.includes('Failed to fetch') ||
+                       error.message?.includes('NetworkError');
+      
+      if (is502 || isOffline) {
+        // Backend unavailable - keep existing user state if available (Firebase auth)
+        console.warn('[AuthContext] Backend unavailable during checkAuth (502/offline) - preserving Firebase auth state');
+        // Don't clear user state - allow Firebase-only auth to continue
+        return null; // Return null but don't clear user
+      }
+      
+      // Handle authentication errors
+      if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+        // Token expired or invalid - only clear if backend explicitly says so
+        console.log('[AuthContext] Backend returned 401/403 - clearing user state');
         setUser(null);
+        return null;
+      } else {
+        // Other error - log but don't clear user state (might be temporary backend issue)
+        console.warn('[AuthContext] Error during checkAuth:', error.message);
+        // Don't clear user state on unknown errors - might be temporary
+        return null;
       }
     } finally {
       setLoading(false);
@@ -101,11 +252,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       if (response && response.success) {
-        // Store token in localStorage
-        if (response.data.token) {
-          localStorage.setItem('token', response.data.token);
-        }
-        
+        // Backend sets httpOnly cookie - DO NOT store token in localStorage
         setUser(response.data.user);
         toast.success('Account created successfully!');
         return { success: true, user: response.data.user };
@@ -179,11 +326,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       if (response && response.success) {
-        // Store token in localStorage
-        if (response.data.token) {
-          localStorage.setItem('token', response.data.token);
-        }
-        
+        // Backend sets httpOnly cookie - DO NOT store token in localStorage
         setUser(response.data.user);
         toast.success('Login successful!');
         return { success: true, user: response.data.user };
@@ -238,13 +381,8 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       
-      // Dynamically import signInWithPopup if not already loaded
-      if (!signInWithPopup) {
-        const firebaseAuth = await import('firebase/auth');
-        signInWithPopup = firebaseAuth.signInWithPopup;
-      }
-      
       // Sign in with Google using Firebase
+      // signInWithPopup is imported from firebase/auth
       const result = await signInWithPopup(auth, googleProvider);
       const firebaseUser = result.user;
       
@@ -294,22 +432,42 @@ export const AuthProvider = ({ children }) => {
           return { success: true, user: userData };
         }
       } catch (backendError) {
-        // If backend is unavailable, use Firebase auth only
-        console.warn('Backend Google auth failed, using Firebase only:', backendError);
+        // CRITICAL: Handle 502 Bad Gateway and other backend errors gracefully
+        // Do NOT redirect to login - show error and allow user to retry
+        const is502 = backendError.response?.status === 502 || 
+                     backendError.message?.includes('502') ||
+                     backendError.message?.includes('Bad Gateway');
+        const isOffline = backendError.errorCode === 'BACKEND_OFFLINE' || 
+                         backendError.isOffline ||
+                         backendError.message?.includes('Failed to fetch') ||
+                         backendError.message?.includes('NetworkError');
         
-        // Store Firebase ID token
-        localStorage.setItem('firebaseToken', idToken);
+        if (is502 || isOffline) {
+          console.error('Backend unavailable (502/offline) - preventing redirect loop:', backendError);
+          toast.error('Server is temporarily unavailable. Please try again in a moment.');
+          
+          // Set user from Firebase temporarily (backend unavailable)
+          // User can still use app, but backend features won't work
+          const userData = {
+            id: firebaseUser.uid,
+            name: firebaseUser.displayName,
+            email: firebaseUser.email,
+            photoURL: firebaseUser.photoURL || null,
+          };
+          setUser(userData);
+          
+          // Return success with Firebase-only auth (no redirect)
+          return { 
+            success: true, 
+            user: userData,
+            backendUnavailable: true 
+          };
+        }
         
-        // Set user from Firebase (when backend is unavailable)
-        setUser({
-          id: firebaseUser.uid,
-          name: firebaseUser.displayName,
-          email: firebaseUser.email,
-          photoURL: firebaseUser.photoURL || null,
-        });
-        
-        toast.success('Login successful!');
-        return { success: true, user: firebaseUser };
+        // For other errors, show error but don't redirect
+        console.error('Backend Google auth failed:', backendError);
+        toast.error(backendError.message || 'Authentication failed. Please try again.');
+        return { success: false, error: backendError.message || 'Authentication failed' };
       }
     } catch (error) {
       console.error('Google login failed:', error);
@@ -342,8 +500,7 @@ export const AuthProvider = ({ children }) => {
     } finally {
       // Clear local state regardless of API call
       setUser(null);
-      localStorage.removeItem('token');
-      localStorage.removeItem('firebaseToken');
+      // No localStorage cleanup needed - backend cookie is cleared by logout endpoint
       toast.success('Logged out successfully');
     }
   };

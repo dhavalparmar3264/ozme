@@ -18,6 +18,7 @@ import Users from './pages/Users';
 import UserDetail from './pages/UserDetail';
 import Coupons from './pages/Coupons';
 import Reviews from './pages/Reviews';
+import Feedback from './pages/Feedback';
 import Settings from './pages/Settings';
 
 // Wrapper component for protected routes with layout
@@ -292,6 +293,23 @@ function App() {
                   setSidebarOpen={setSidebarOpen}
                 >
                   <Reviews />
+                </AdminLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/feedback"
+            element={
+              <ProtectedRoute>
+                <AdminLayout
+                  darkMode={darkMode}
+                  setDarkMode={setDarkMode}
+                  toggleSidebar={toggleSidebar}
+                  sidebarOpen={sidebarOpen}
+                  setSidebarOpen={setSidebarOpen}
+                >
+                  <Feedback />
                 </AdminLayout>
               </ProtectedRoute>
             }

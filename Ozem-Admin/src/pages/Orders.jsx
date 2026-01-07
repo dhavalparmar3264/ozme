@@ -53,7 +53,7 @@ const Orders = ({ onViewOrder }) => {
               name: item.product?.name || 'Product',
               qty: item.quantity || 1,
               price: item.price || 0,
-              size: item.size || '100ml'
+              size: item.size || '120ml'
             })) || [],
             subtotal: order.totalAmount + (order.discountAmount || 0),
             shipping: 0,

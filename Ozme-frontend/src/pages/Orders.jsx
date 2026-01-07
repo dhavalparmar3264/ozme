@@ -34,7 +34,7 @@ export default function Orders() {
               image: item.product?.images?.[0] || item.product?.image || '',
               price: item.price,
               quantity: item.quantity,
-              size: item.size || '100ml',
+              size: item.size || '120ml',
               category: item.product?.category || 'Perfume',
             })) || [],
             shippingAddress: order.shippingAddress ? {
@@ -57,23 +57,24 @@ export default function Orders() {
           
           setOrders(transformedOrders);
           
-          // Also save to localStorage as backup
-          localStorage.setItem('allOrders', JSON.stringify(transformedOrders));
+          // Save to localStorage as backup (or clear if empty)
+          if (transformedOrders.length === 0) {
+            // Clear localStorage if backend returns no orders
+            localStorage.removeItem('allOrders');
+          } else {
+            localStorage.setItem('allOrders', JSON.stringify(transformedOrders));
+          }
         } else {
-          // Backend unavailable, try localStorage
-          const localOrders = JSON.parse(localStorage.getItem('allOrders') || '[]');
-          setOrders(localOrders);
+          // Backend unavailable, clear localStorage and show empty
+          localStorage.removeItem('allOrders');
+          setOrders([]);
         }
       } catch (err) {
         console.error('Error fetching orders:', err);
-        // Fallback to localStorage
-        try {
-          const localOrders = JSON.parse(localStorage.getItem('allOrders') || '[]');
-          setOrders(localOrders);
-        } catch (localError) {
-          console.error('Error loading orders from localStorage:', localError);
-          setError('Failed to load orders');
-        }
+        // Error occurred, clear localStorage and show empty
+        localStorage.removeItem('allOrders');
+        setError('Failed to load orders');
+        setOrders([]);
       } finally {
         setLoading(false);
       }

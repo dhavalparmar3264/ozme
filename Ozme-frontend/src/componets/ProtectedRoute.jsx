@@ -18,8 +18,15 @@ const ProtectedRoute = ({ children }) => {
     );
   }
 
-  // Redirect to login if not authenticated
+  // CRITICAL: Only redirect to login if explicitly not authenticated
+  // Don't redirect if backend is offline (502) - allow Firebase-only auth
   if (!isAuthenticated) {
+    // Check if we're in a redirect loop (same location)
+    const isLoginPage = location.pathname === '/login';
+    if (isLoginPage) {
+      // Already on login page - don't redirect again
+      return children; // Allow access to login page
+    }
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

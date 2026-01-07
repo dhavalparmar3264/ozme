@@ -10,7 +10,7 @@ import Headers from './Headers';
 import toast from 'react-hot-toast';
 
 function Product({ onBack }) {
-  const { addToCart } = useCart();
+  const { addToCart, addingToCart } = useCart();
   const { toggleWishlist, isInWishlist } = useWishlist();
   const { id } = useParams();
   const navigate = useNavigate();
@@ -19,7 +19,7 @@ function Product({ onBack }) {
   const [error, setError] = useState(null);
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
-  const [selectedSize, setSelectedSize] = useState('100ML');
+  const [selectedSize, setSelectedSize] = useState(null);
   const [activeTab, setActiveTab] = useState('description');
   
   // Reviews state
@@ -82,8 +82,8 @@ function Product({ onBack }) {
         } else {
           // Backward compatibility: create single size from old fields
           sizes = [{
-            value: backendProduct.size || '100ML',
-            label: backendProduct.size || '100ML',
+            value: backendProduct.size || '120ML',
+            label: backendProduct.size || '120ML',
             price: backendProduct.price,
             originalPrice: backendProduct.originalPrice || backendProduct.price,
             stockQuantity: backendProduct.stockQuantity || 0,
@@ -114,7 +114,7 @@ function Product({ onBack }) {
           reviews: backendProduct.reviewsCount || 0,
           tag: backendProduct.tag || null,
           bestseller: backendProduct.tag === 'Bestseller',
-          size: sizes.length > 0 ? sizes[0].value : (backendProduct.size || '100ML'),
+          size: sizes.length > 0 ? sizes[0].value : (backendProduct.size || '120ML'),
           sizes: sizes, // Add sizes array
           stockQuantity: sizes.reduce((sum, s) => sum + s.stockQuantity, 0), // Total stock across all sizes
           inStock: sizes.some(s => s.inStock), // Product is in stock if any size is in stock
@@ -134,9 +134,13 @@ function Product({ onBack }) {
         // Set default selected size (first available size or first size in stock)
         if (sizes.length > 0) {
           const firstInStock = sizes.find(s => s.inStock);
-          setSelectedSize(firstInStock ? firstInStock.value : sizes[0].value);
+          const defaultSize = firstInStock ? firstInStock.value : sizes[0].value;
+          setSelectedSize(defaultSize);
+          // Reset quantity to 1 when product changes
+          setQuantity(1);
         } else if (backendProduct.size) {
           setSelectedSize(backendProduct.size);
+          setQuantity(1);
         }
       } else {
         throw new Error(response?.message || 'Product not found');
@@ -189,7 +193,14 @@ function Product({ onBack }) {
 
   // Use sizes from product (already transformed from backend)
   const sizes = product.sizes || [];
-  const selectedSizeObj = sizes.find(s => s.value === selectedSize);
+  
+  // Ensure selectedSize is set (default to first available size)
+  const effectiveSelectedSize = selectedSize || (sizes.length > 0 ? sizes[0].value : '120ML');
+  if (!selectedSize && sizes.length > 0) {
+    setSelectedSize(effectiveSelectedSize);
+  }
+  
+  const selectedSizeObj = sizes.find(s => s.value === effectiveSelectedSize || s.size === effectiveSelectedSize);
   const currentPrice = selectedSizeObj?.price || product.price;
   const selectedSizeStock = selectedSizeObj?.stockQuantity || 0;
   const selectedSizeInStock = selectedSizeObj?.inStock !== undefined ? selectedSizeObj.inStock : (selectedSizeStock > 0);
@@ -197,25 +208,89 @@ function Product({ onBack }) {
   const nextImage = () => setSelectedImage((prev) => (prev === product.images.length - 1 ? 0 : prev + 1));
   const prevImage = () => setSelectedImage((prev) => (prev === 0 ? product.images.length - 1 : prev - 1));
 
-  const handleAddToCartClick = () => {
+  const handleAddToCartClick = async () => {
+    // Use the actual backend size internally, but display "120 ML" to user
+    const sizeToUse = selectedSize || effectiveSelectedSize;
+    
+    if (!sizeToUse) {
+      toast.error('Please select a size');
+      return;
+    }
+    
     if (!selectedSizeInStock || selectedSizeStock === 0) {
-      toast.error(`Size ${selectedSize} is out of stock`);
+      toast.error(`Size 120 ML is out of stock`);
       return;
     }
     
     if (quantity > selectedSizeStock) {
-      toast.error(`Only ${selectedSizeStock} items available in stock for ${selectedSize}`);
+      toast.error(`Only ${selectedSizeStock} items available in stock for 120 ML`);
       return;
     }
     
-    // Pass the selected size price to addToCart
-    addToCart(product, quantity, selectedSize, currentPrice);
+    if (quantity < 1) {
+      toast.error('Quantity must be at least 1');
+      return;
+    }
+    
+    // Pass the actual backend size to addToCart (for cart logic), but user sees "120 ML"
+    await addToCart(product, quantity, sizeToUse, currentPrice);
   };
 
-  const handleWhatsAppOrder = () => {
-    const message = `Hi, I want to order:\n\n*${product.name}*\nSize: ${selectedSize}\nQuantity: ${quantity}\nPrice: ₹${(currentPrice * quantity).toLocaleString('en-IN')}\n\nPlease confirm availability.`;
-    window.open(`https://wa.me/919876543210?text=${encodeURIComponent(message)}`, '_blank');
-  };
+  const handleWhatsAppOrder = () => {
+    // Display "120 ML" to user, but use actual backend size internally if needed
+    const message = `Hi, I want to order:\n\n*${product.name}*\nSize: 120 ML\nQuantity: ${quantity}\nPrice: ₹${(currentPrice * quantity).toLocaleString('en-IN')}\n\nPlease confirm availability.`;
+    window.open(`https://wa.me/919876543210?text=${encodeURIComponent(message)}`, '_blank');
+  };
+
+  const handleBuyNow = () => {
+    // Validate size and stock
+    if (!selectedSizeInStock || selectedSizeStock === 0) {
+      toast.error(`Size 120 ML is out of stock`);
+      return;
+    }
+    
+    if (quantity > selectedSizeStock) {
+      toast.error(`Only ${selectedSizeStock} items available in stock for 120 ML`);
+      return;
+    }
+
+    // Determine the price to use
+    const itemPrice = currentPrice;
+    let itemOriginalPrice = product.originalPrice || product.price;
+    if (product.sizes && Array.isArray(product.sizes) && selectedSize) {
+      const sizeObj = product.sizes.find(s => s.value === selectedSize || s.size === selectedSize);
+      if (sizeObj && sizeObj.originalPrice) {
+        itemOriginalPrice = sizeObj.originalPrice;
+      }
+    }
+
+    // Prepare the buyNowItem payload
+    const buyNowItem = {
+      id: product.id,
+      productId: product.id,
+      name: product.name,
+      category: product.category || product.gender || 'Unisex',
+      price: itemPrice,
+      originalPrice: itemOriginalPrice,
+      image: product.images?.[0] || product.image || '',
+      quantity: quantity,
+      size: selectedSize || '120ML',
+      stock: selectedSizeStock
+    };
+
+    // Save to sessionStorage (clears on tab close, but persists during navigation)
+    try {
+      sessionStorage.setItem('buyNowItem', JSON.stringify(buyNowItem));
+      // Also save to localStorage as backup
+      localStorage.setItem('buyNowItem', JSON.stringify(buyNowItem));
+      
+      // Redirect to checkout
+      navigate('/checkout');
+    } catch (error) {
+      console.error('Error saving buyNowItem:', error);
+      toast.error('Failed to proceed to checkout. Please try again.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-white">
@@ -254,29 +329,33 @@ function Product({ onBack }) {
               )}
             </div>
 
-            {/* Main Image Container */}
-            <div className="flex items-center justify-center relative group bg-gray-50 p-4 sm:p-8">
-              <div className="relative w-full max-w-lg aspect-[3/4] overflow-hidden">
-                <img src={product.images[selectedImage]} alt={product.name} className="w-full h-full object-cover shadow-xl transition-transform duration-500 group-hover:scale-[1.02]" />
-                {/* Navigation Buttons */}
-                <button onClick={prevImage} className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/70 hover:bg-black hover:text-white flex items-center justify-center rounded-full shadow-md transition-all duration-300 opacity-0 group-hover:opacity-100">
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button onClick={nextImage} className="absolute right-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/70 hover:bg-black hover:text-white flex items-center justify-center rounded-full shadow-md transition-all duration-300 opacity-0 group-hover:opacity-100">
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+            {/* Main Image Container */}
+            <div className="flex items-center justify-center relative group bg-gray-50 p-4 sm:p-8">
+              <div className="relative w-full max-w-lg h-[300px] sm:h-[350px] md:h-[420px] lg:h-[480px] flex items-center justify-center overflow-hidden">
+                <img 
+                  src={product.images[selectedImage]} 
+                  alt={product.name} 
+                  className="max-w-full max-h-full w-auto h-auto object-contain object-center shadow-xl transition-transform duration-500 group-hover:scale-[1.02]" 
+                />
+                {/* Navigation Buttons */}
+                <button onClick={prevImage} className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/70 hover:bg-black hover:text-white flex items-center justify-center rounded-full shadow-md transition-all duration-300 opacity-0 group-hover:opacity-100 z-10">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button onClick={nextImage} className="absolute right-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/70 hover:bg-black hover:text-white flex items-center justify-center rounded-full shadow-md transition-all duration-300 opacity-0 group-hover:opacity-100 z-10">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
 
-            {/* Thumbnails */}
-            <div className="flex gap-3 justify-center mt-4">
-              {product.images.map((img, idx) => (
-                <button key={idx} onClick={() => setSelectedImage(idx)}
-                  className={`w-16 h-16 sm:w-20 sm:h-20 border-2 transition-all duration-300 ${selectedImage === idx ? 'border-black' : 'border-gray-200 hover:border-gray-400'}`}>
-                  <img src={img} alt={`View ${idx + 1}`} className="w-full h-full object-cover" />
-                </button>
-              ))}
-            </div>
+            {/* Thumbnails */}
+            <div className="flex gap-3 justify-center mt-4">
+              {product.images.map((img, idx) => (
+                <button key={idx} onClick={() => setSelectedImage(idx)}
+                  className={`w-16 h-16 sm:w-20 sm:h-20 border-2 transition-all duration-300 flex items-center justify-center overflow-hidden bg-white ${selectedImage === idx ? 'border-black' : 'border-gray-200 hover:border-gray-400'}`}>
+                  <img src={img} alt={`View ${idx + 1}`} className="max-w-full max-h-full w-auto h-auto object-contain object-center" />
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Right Side - Product Details */}
@@ -329,45 +408,38 @@ function Product({ onBack }) {
               {product.description || product.shortDescription || 'Product description coming soon.'}
             </p>
 
-            {/* Size Selection */}
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-gray-900 mb-3 tracking-wide uppercase">SIZE</label>
-              <div className="flex gap-3">
-                {sizes.map((size) => (
-                  <button key={size.value} 
-                    onClick={() => setSelectedSize(size.value)}
-                    className={`py-3 px-6 text-center border-2 transition-all duration-200 
-                      ${selectedSize === size.value ? 'border-black bg-black text-white' : 'border-gray-300 bg-white text-gray-800 hover:border-black'}`}>
-                    <div className="font-semibold text-sm">{size.label}</div>
-                    <div className="text-xs mt-1 opacity-80">
-                  ₹{size.price.toLocaleString('en-IN')}
-                  {size.originalPrice && size.originalPrice > size.price && (
-                    <span className="block text-gray-400 line-through text-[10px]">
-                      ₹{size.originalPrice.toLocaleString('en-IN')}
-                    </span>
-                  )}
+            {/* Size Selection - Static Display */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-900 mb-3 tracking-wide uppercase">SIZE</label>
+              <div className="flex gap-2 sm:gap-3 flex-wrap">
+                {/* Static 120 ML display - non-clickable */}
+                <div className="py-2.5 sm:py-3 px-4 sm:px-6 text-center border-2 border-black bg-black text-white cursor-default">
+                  <div className="font-semibold text-xs sm:text-sm">120 ML</div>
+                  <div className="text-[10px] sm:text-xs mt-1 opacity-80">
+                    ₹{currentPrice.toLocaleString('en-IN')}
+                    {selectedSizeObj?.originalPrice && selectedSizeObj.originalPrice > currentPrice && (
+                      <span className="block text-gray-400 line-through text-[9px] sm:text-[10px]">
+                        ₹{selectedSizeObj.originalPrice.toLocaleString('en-IN')}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                {!size.inStock && (
-                  <div className="text-[10px] text-red-500 mt-1 font-semibold">Out of Stock</div>
-                )}
-                  </button>
-                ))}
-              </div>
-            </div>
+              </div>
+            </div>
 
             {/* Quantity */}
-            <div className="mb-8">
+            <div className="mb-6 sm:mb-8">
               <label className="block text-sm font-semibold text-gray-900 mb-3 tracking-wide uppercase">
                 QUANTITY {selectedSizeStock > 0 && (
-                  <span className="text-xs font-normal text-gray-500 normal-case">({selectedSizeStock} available for {selectedSize})</span>
+                  <span className="text-xs font-normal text-gray-500 normal-case">({selectedSizeStock} available for 120 ML)</span>
                 )}
               </label>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center border border-gray-300">
+              <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+                <div className="flex items-center border border-gray-300 rounded">
                   <button 
                     onClick={() => setQuantity(q => Math.max(1, q - 1))} 
-                    className="w-10 h-10 flex items-center justify-center text-gray-600 hover:bg-gray-50 transition-colors"
-                    disabled={quantity <= 1}
+                    className="w-10 h-10 sm:w-10 sm:h-10 flex items-center justify-center text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={quantity <= 1 || addingToCart}
                   >
                     <Minus className="w-4 h-4" />
                   </button>
@@ -377,57 +449,83 @@ function Product({ onBack }) {
                       const maxQty = selectedSizeStock > 0 ? Math.min(selectedSizeStock, 10) : 10;
                       return Math.min(q + 1, maxQty);
                     })} 
-                    className="w-10 h-10 flex items-center justify-center text-gray-600 hover:bg-gray-50 transition-colors"
-                    disabled={quantity >= (selectedSizeStock > 0 ? Math.min(selectedSizeStock, 10) : 10)}
+                    className="w-10 h-10 sm:w-10 sm:h-10 flex items-center justify-center text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={quantity >= (selectedSizeStock > 0 ? Math.min(selectedSizeStock, 10) : 10) || addingToCart}
                   >
                     <Plus className="w-4 h-4" />
                   </button>
                 </div>
-                {quantity > 1 && <span className="text-sm text-gray-500 font-medium">Total: ₹{(currentPrice * quantity).toLocaleString('en-IN')}</span>}
+                {quantity > 1 && <span className="text-sm text-gray-500 font-medium whitespace-nowrap">Total: ₹{(currentPrice * quantity).toLocaleString('en-IN')}</span>}
               </div>
             </div>
 
             {/* Stock Status */}
             {!selectedSizeInStock || selectedSizeStock === 0 ? (
               <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
-                <p className="text-red-700 font-semibold text-sm">Size {selectedSize} is Out of Stock</p>
+                <p className="text-red-700 font-semibold text-sm">Size 120 ML is Out of Stock</p>
               </div>
             ) : selectedSizeStock < 10 ? (
               <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded">
-                <p className="text-amber-700 font-semibold text-sm">Only {selectedSizeStock} left in stock for {selectedSize}!</p>
+                <p className="text-amber-700 font-semibold text-sm">Only {selectedSizeStock} left in stock for 120 ML!</p>
               </div>
             ) : null}
 
             {/* Action Buttons */}
-            <div className="flex gap-3 mb-6">
-              <button 
-                onClick={handleAddToCartClick} 
-                disabled={!selectedSizeInStock || selectedSizeStock === 0}
-                className={`flex-1 py-3 font-semibold text-sm tracking-wider transition-all duration-300 flex items-center justify-center gap-2 shadow-md ${
-                  !selectedSizeInStock || selectedSizeStock === 0
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    : 'bg-black text-white hover:bg-gray-800'
-                }`}
-              >
-                <ShoppingCart className="w-5 h-5" />
-                {!selectedSizeInStock || selectedSizeStock === 0 ? 'OUT OF STOCK' : 'ADD TO CART'}
-              </button>
-              <button onClick={() => product && toggleWishlist(product)}
-                className={`w-12 h-12 flex items-center justify-center border transition-all duration-300 rounded 
-                  ${product && isInWishlist(product.id) ? 'border-red-500 bg-red-50 text-red-500' : 'border-gray-300 text-gray-600 hover:border-black hover:text-black'}`}>
-                <Heart className={`w-5 h-5 ${product && isInWishlist(product.id) ? 'fill-red-500' : ''}`} />
-              </button>
-              <button className="w-12 h-12 flex items-center justify-center border border-gray-300 text-gray-600 hover:border-black hover:text-black transition-all duration-300 rounded">
-                <Share2 className="w-5 h-5" />
-              </button>
-            </div>
+            <div className="flex flex-col gap-3 mb-6">
+              <div className="flex gap-2 sm:gap-3 flex-wrap">
+                <button 
+                  onClick={handleAddToCartClick} 
+                  disabled={!selectedSizeInStock || selectedSizeStock === 0 || addingToCart || !selectedSize}
+                  className={`flex-1 min-w-0 py-3 px-2 sm:px-3 font-semibold text-xs sm:text-sm tracking-wide sm:tracking-wider transition-all duration-300 flex items-center justify-center gap-1.5 sm:gap-2 rounded-full ${
+                    !selectedSizeInStock || selectedSizeStock === 0 || addingToCart || !selectedSize
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-60'
+                      : 'bg-yellow-400 text-black hover:bg-yellow-500'
+                  }`}
+                >
+                  {addingToCart ? (
+                    <>
+                      <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin flex-shrink-0" />
+                      <span className="whitespace-nowrap">Adding...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShoppingCart className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                      <span className="whitespace-nowrap">{!selectedSizeInStock || selectedSizeStock === 0 ? 'OUT OF STOCK' : 'ADD TO CART'}</span>
+                    </>
+                  )}
+                </button>
+                <button 
+                  onClick={handleBuyNow}
+                  disabled={!selectedSizeInStock || selectedSizeStock === 0}
+                  className={`flex-1 min-w-0 py-3 px-2 sm:px-3 font-semibold text-xs sm:text-sm tracking-wide sm:tracking-wider transition-all duration-300 flex items-center justify-center gap-1.5 sm:gap-2 rounded-full ${
+                    !selectedSizeInStock || selectedSizeStock === 0
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-60'
+                      : 'bg-orange-400 text-black hover:bg-orange-500'
+                  }`}
+                >
+                  <span className="whitespace-nowrap">BUY NOW</span>
+                </button>
+                <button 
+                  onClick={() => product && toggleWishlist(product)}
+                  className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center border transition-all duration-300 rounded flex-shrink-0 ${
+                    product && isInWishlist(product.id) ? 'border-red-500 bg-red-50 text-red-500' : 'border-gray-300 text-gray-600 hover:border-black hover:text-black'
+                  }`}
+                >
+                  <Heart className={`w-4 h-4 sm:w-5 sm:h-5 ${product && isInWishlist(product.id) ? 'fill-red-500' : ''}`} />
+                </button>
+                <button 
+                  className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center border border-gray-300 text-gray-600 hover:border-black hover:text-black transition-all duration-300 rounded flex-shrink-0">
+                  <Share2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
+              </div>
+            </div>
             
-            {/* WhatsApp Order Button */}
-            <button onClick={handleWhatsAppOrder}
-              className="w-full py-3 bg-green-500 hover:bg-green-600 text-white font-semibold text-sm tracking-wider transition-all duration-300 flex items-center justify-center gap-2 shadow-md mb-8 rounded">
-              <MessageCircle className="w-5 h-5" />
-              Order via WhatsApp
-            </button>
+            {/* WhatsApp Order Button */}
+            <button onClick={handleWhatsAppOrder}
+              className="w-full py-3 px-4 bg-green-500 hover:bg-green-600 text-white font-semibold text-xs sm:text-sm tracking-wide sm:tracking-wider transition-all duration-300 flex items-center justify-center gap-2 shadow-md mb-6 sm:mb-8 rounded">
+              <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              <span className="whitespace-nowrap">Order via WhatsApp</span>
+            </button>
 
             {/* Features */}
             <div className="space-y-3 mb-8 p-4 bg-gray-50 border border-gray-200 rounded">

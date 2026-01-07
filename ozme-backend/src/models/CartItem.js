@@ -7,7 +7,7 @@ import mongoose from 'mongoose';
  * @property {string} guestToken - Guest session token (for non-logged users)
  * @property {ObjectId} product - Reference to Product
  * @property {number} quantity - Item quantity
- * @property {string} size - Product size (default: 100ml)
+ * @property {string} size - Product size (default: 120ml)
  */
 const cartItemSchema = new mongoose.Schema(
   {
@@ -33,7 +33,7 @@ const cartItemSchema = new mongoose.Schema(
     },
     size: {
       type: String,
-      default: '100ml',
+      default: '120ml',
     },
   },
   {

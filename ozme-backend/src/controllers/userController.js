@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import { normalizePhone, isValidIndianPhone } from '../utils/phoneNormalize.js';
 
 /**
  * Update user profile
@@ -17,12 +18,71 @@ export const updateProfile = async (req, res) => {
       });
     }
 
-    // Update fields
+    // NEVER accept phoneVerified from client request body (security)
+    // Only backend can set phoneVerified=true after OTP verification
+
+    // Update name if provided
     if (name) user.name = name;
-    if (phone !== undefined) user.phone = phone;
+    
+    // Handle phone update - ENFORCE LOCKING: verified phones cannot be changed
+    if (phone !== undefined) {
+      // CRITICAL: Normalize phone to consistent format for uniqueness enforcement
+      const cleanNewPhone = normalizePhone(phone);
+      
+      if (cleanNewPhone && !isValidIndianPhone(phone)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid phone number. Please enter a valid 10-digit Indian mobile number.',
+          errorCode: 'INVALID_PHONE',
+        });
+      }
+      
+      // Normalize current phone for comparison
+      const cleanCurrentPhone = user.phone ? normalizePhone(user.phone) : null;
+      
+      // If phone is changing (different number)
+      if (cleanNewPhone && cleanNewPhone !== cleanCurrentPhone) {
+        // CRITICAL: If current phone is verified, BLOCK the change (phone is locked)
+        if (user.phoneVerified && user.phone) {
+          return res.status(400).json({
+            success: false,
+            message: 'Phone number is verified and permanently locked. It cannot be changed.',
+            errorCode: 'PHONE_VERIFIED_LOCKED',
+          });
+        }
+        
+        // Check if new phone is already used by another user (uniqueness enforcement)
+        // CRITICAL: Use normalized phone for comparison
+        const existingUser = await User.findOne({
+          phone: cleanNewPhone, // DB stores normalized format
+          _id: { $ne: user._id },
+        });
+        if (existingUser) {
+          // Only block if phone is verified on another account
+          if (existingUser.phoneVerified) {
+            return res.status(409).json({
+              success: false,
+              message: 'This phone number is already linked to another account',
+              errorCode: 'PHONE_ALREADY_LINKED',
+            });
+          }
+          // If not verified, allow reuse (unverified numbers can be reused)
+        }
+        
+        // Phone is changing and not verified (or no current phone)
+        // Set new phone (normalized) and unverify (new phone must be verified)
+        user.phone = cleanNewPhone;
+        user.phoneVerified = false;
+        user.phoneVerifiedAt = null;
+      }
+      // If phone is same (normalized), keep verification status unchanged (no update needed)
+    }
+    
+    // If only name is being updated (no phone change), keep phoneVerified unchanged
 
     await user.save();
 
+    // Return updated user with verification status
     res.json({
       success: true,
       message: 'Profile updated successfully',
@@ -32,6 +92,9 @@ export const updateProfile = async (req, res) => {
           name: user.name,
           email: user.email,
           phone: user.phone,
+          phoneVerified: user.phoneVerified || false,
+          isPhoneVerified: user.phoneVerified || false, // Alias for frontend compatibility
+          phoneVerifiedAt: user.phoneVerifiedAt || null,
           role: user.role,
         },
       },

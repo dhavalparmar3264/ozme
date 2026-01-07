@@ -15,7 +15,7 @@ const ProductModal = ({ product, onClose }) => {
     if (product?.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
       return product.sizes[0].value;
     }
-    return product?.size || '100ML';
+    return product?.size || '120ML';
   });
 
   if (!product) return null;
@@ -25,8 +25,8 @@ const ProductModal = ({ product, onClose }) => {
   if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
     sizes = product.sizes;
   } else {
-    // Default size based on product.size or '100ML'
-    const defaultSize = product.size || '100ML';
+    // Default size based on product.size or '120ML'
+    const defaultSize = product.size || '120ML';
     sizes = [
       { value: defaultSize, price: product.price, originalPrice: product.originalPrice || product.price }
     ];
@@ -38,7 +38,7 @@ const ProductModal = ({ product, onClose }) => {
       if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
         setSelectedSize(product.sizes[0].value);
       } else {
-        setSelectedSize(product.size || '100ML');
+        setSelectedSize(product.size || '120ML');
       }
     }
   }, [product]);
@@ -90,19 +90,23 @@ const ProductModal = ({ product, onClose }) => {
             </div>
 
             <div className="flex-1 flex items-center justify-center relative group">
-              <div className="relative w-full max-w-sm aspect-[3/4]">
-                <img src={images[selectedImage]} alt={product.name} className="w-full h-full object-cover shadow-lg" />
+              <div className="relative w-full max-w-sm h-[300px] sm:h-[400px] md:h-[450px] flex items-center justify-center overflow-hidden">
+                <img 
+                  src={images[selectedImage]} 
+                  alt={product.name} 
+                  className="max-w-full max-h-full w-auto h-auto object-contain object-center shadow-lg" 
+                />
                 {images.length > 1 && (
                   <>
                     <button onClick={prevImage}
-                      className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/90 hover:bg-black hover:text-white flex items-center justify-center shadow-lg transition-all opacity-0 group-hover:opacity-100">
+                      className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/90 hover:bg-black hover:text-white flex items-center justify-center shadow-lg transition-all opacity-0 group-hover:opacity-100 z-10">
                       <ChevronLeft className="w-4 h-4" />
                     </button>
                     <button onClick={nextImage}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/90 hover:bg-black hover:text-white flex items-center justify-center shadow-lg transition-all opacity-0 group-hover:opacity-100">
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-white/90 hover:bg-black hover:text-white flex items-center justify-center shadow-lg transition-all opacity-0 group-hover:opacity-100 z-10">
                       <ChevronRight className="w-4 h-4" />
                     </button>
-                    <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 text-white text-xs font-semibold">
+                    <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 text-white text-xs font-semibold z-10">
                       {selectedImage + 1} / {images.length}
                     </div>
                   </>
@@ -114,10 +118,10 @@ const ProductModal = ({ product, onClose }) => {
               <div className="flex gap-2 mt-4 justify-center">
                 {images.map((img, idx) => (
                   <button key={idx} onClick={() => setSelectedImage(idx)}
-                    className={`w-16 h-16 border-2 transition-all duration-300 ${
+                    className={`w-16 h-16 border-2 transition-all duration-300 flex items-center justify-center overflow-hidden bg-white ${
                       selectedImage === idx ? 'border-gray-900 scale-105' : 'border-gray-200 hover:border-gray-500'
                     }`}>
-                    <img src={img} alt={`View ${idx + 1}`} className="w-full h-full object-cover" />
+                    <img src={img} alt={`View ${idx + 1}`} className="max-w-full max-h-full w-auto h-auto object-contain object-center" />
                   </button>
                 ))}
               </div>
@@ -207,7 +211,7 @@ const ProductModal = ({ product, onClose }) => {
             {/* Action Buttons */}
             <div className="flex gap-2 mb-3 lg:mt-6">
               <button onClick={handleAddToCart}
-                className="flex-1 py-3 bg-black text-white font-semibold text-sm hover:bg-gray-800 transition-all duration-300 flex items-center justify-center gap-2">
+                className="flex-1 py-3 bg-yellow-400 text-black font-semibold text-sm hover:bg-yellow-500 transition-all duration-300 flex items-center justify-center gap-2 rounded-full">
                 <ShoppingCart className="w-4 h-4" />ADD TO CART
               </button>
               <button onClick={() => toggleWishlist(product)}

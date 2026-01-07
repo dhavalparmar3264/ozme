@@ -7,12 +7,12 @@ import { useWishlist } from '../../context/WishlistContext';
 const ProductModal = ({ product, onClose, onAddToCart }) => {
     const { toggleWishlist, isInWishlist } = useWishlist();
     const [quantity, setQuantity] = useState(1);
-    const [selectedSize, setSelectedSize] = useState('100ml');
+    const [selectedSize, setSelectedSize] = useState('120ml');
 
     if (!product) return null;
 
     const sizes = [
-        { value: '100ml', price: product.price * 1.8 }
+        { value: '120ml', price: product.price * 1.8 }
     ];
 
     const handleShare = () => {
@@ -147,7 +147,7 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                             </label>
                             <div className="inline-block">
                                 <div className="py-2 sm:py-3 px-6 sm:px-8 text-center border-2 border-gray-900 bg-gray-900 text-white">
-                                    <div className="font-semibold text-xs sm:text-sm">100ml</div>
+                                    <div className="font-semibold text-xs sm:text-sm">120ml</div>
                                     <div className="text-xs mt-0.5 opacity-80">
                                         ₹{Math.round(sizes[0].price).toLocaleString('en-IN')}
                                     </div>

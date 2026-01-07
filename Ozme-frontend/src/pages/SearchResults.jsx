@@ -223,7 +223,7 @@ function SearchResults({ onProductClick, onQuickView }) {
 
                           {/* Add to Cart */}
                           <div className="absolute bottom-0 left-0 right-0 p-2 sm:p-3 md:p-4 translate-y-full group-hover:translate-y-0 transition-transform duration-500">
-                            <button onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '100ml'); }}
+                            <button onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '120ml'); }}
                               className="w-full py-2 sm:py-2.5 md:py-3 text-xs sm:text-sm bg-white text-gray-900 font-semibold hover:bg-gray-900 hover:text-white transition-all duration-300 flex items-center justify-center gap-1.5 sm:gap-2 shadow-xl">
                                 <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4" />Add to Cart
                             </button>
@@ -258,7 +258,7 @@ function SearchResults({ onProductClick, onQuickView }) {
                         {/* Mobile Add to Cart Button - Visible on mobile only */}
                         <div className="mt-3 sm:mt-4 md:hidden">
                           <button 
-                            onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '100ml'); }}
+                            onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '120ml'); }}
                             className="w-full py-2.5 sm:py-3 text-sm bg-black text-white font-semibold hover:bg-gray-900 transition-all duration-300 flex items-center justify-center gap-2 shadow-lg"
                           >
                             <ShoppingCart className="w-4 h-4" />

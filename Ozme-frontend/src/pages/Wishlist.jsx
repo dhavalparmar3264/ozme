@@ -17,12 +17,12 @@ export default function WishlistPage() {
             images: product.image ? [product.image] : product.images || [],
             gender: product.gender || (product.category?.toLowerCase().includes('men') ? 'men' : product.category?.toLowerCase().includes('women') ? 'women' : 'unisex')
         };
-        addToCart(cartProduct, 1, '100ml');
+        addToCart(cartProduct, 1, '120ml');
     };
 
     const moveAllToCart = () => {
         wishlist.forEach(product => {
-            addToCart(product, 1, '100ml');
+            addToCart(product, 1, '120ml');
         });
     };
 

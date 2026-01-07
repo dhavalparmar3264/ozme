@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
@@ -29,6 +29,19 @@ if (isFirebaseConfigured) {
 
     // Initialize Firebase Auth
     auth = getAuth(app);
+    
+    // Set persistence to LOCAL - persists across browser sessions
+    // This ensures Google login persists after page refresh and browser restart
+    // Must be set BEFORE any auth operations
+    if (typeof window !== 'undefined') {
+      try {
+        setPersistence(auth, browserLocalPersistence).catch((err) => {
+          console.warn('Firebase persistence setting error:', err);
+        });
+      } catch (err) {
+        console.warn('Firebase persistence initialization error:', err);
+      }
+    }
 
     // Initialize Google Auth Provider
     googleProvider = new GoogleAuthProvider();

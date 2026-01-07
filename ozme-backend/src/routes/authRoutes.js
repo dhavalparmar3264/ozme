@@ -1,8 +1,9 @@
 import express from 'express';
-import { register, login, getMe, logout, googleAuth } from '../controllers/authController.js';
+import { register, login, getMe, logout, googleAuth, sendLoginOTP, verifyLoginOTP, updateProfileEmail } from '../controllers/authController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { body } from 'express-validator';
 import { validateRequest } from '../middleware/validateRequest.js';
+import { otpSendRateLimiter, otpVerifyRateLimiter } from '../middleware/otpRateLimiter.js';
 
 const router = express.Router();
 
@@ -25,6 +26,14 @@ const loginValidation = [
 router.post('/register', registerValidation, validateRequest, register);
 router.post('/login', loginValidation, validateRequest, login);
 router.post('/google', googleAuth); // Google authentication (no validation needed, handled by Firebase)
+
+// OTP Login Routes (public)
+router.post('/otp/send', otpSendRateLimiter, sendLoginOTP);
+router.post('/otp/verify', otpVerifyRateLimiter, verifyLoginOTP);
+
+// Profile update (requires auth)
+router.post('/profile/email', protect, updateProfileEmail);
+
 router.get('/me', protect, getMe);
 router.post('/logout', logout);
 

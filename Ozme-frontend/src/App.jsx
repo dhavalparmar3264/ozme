@@ -28,6 +28,7 @@ import FAQ from './pages/FAQ';
 import TrackOrder from './pages/TrackOrder';
 import CheckoutSuccess from './pages/CheckoutSuccess';
 import SearchResults from './pages/SearchResults';
+import Feedback from './pages/Feedback';
 import { useState } from 'react';
 
 function App() {
@@ -123,10 +124,21 @@ function AppContent() {
           <Route path="/terms" element={<Terms />} />
           <Route path="/faqs" element={<FAQ />} />
           <Route path="/shipping" element={<Shipping />} />
+          <Route path="/feedback" element={<Feedback />} />
 
           {/* Auth pages */}
           <Route path="/login" element={
-            isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />
+            isAuthenticated ? (
+              (() => {
+                // Check for explicit redirect path (from feedback page)
+                const redirectPath = sessionStorage.getItem('post_login_redirect');
+                if (redirectPath) {
+                  // Don't clear redirect key here - let feedback page clear it after successful submission
+                  return <Navigate to={redirectPath} replace />;
+                }
+                return <Navigate to="/dashboard" replace />;
+              })()
+            ) : <Login />
           } />
 
           {/* Protected routes */}

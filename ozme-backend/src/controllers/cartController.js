@@ -61,7 +61,7 @@ export const getCart = async (req, res) => {
  */
 export const addToCart = async (req, res) => {
   try {
-    const { productId, quantity = 1, size = '100ml' } = req.body;
+    const { productId, quantity = 1, size = '120ml' } = req.body;
 
     let userId = null;
     let guestToken = null;

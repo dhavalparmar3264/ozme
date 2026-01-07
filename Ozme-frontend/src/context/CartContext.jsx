@@ -8,6 +8,7 @@ export const CartProvider = ({ children }) => {
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [addingToCart, setAddingToCart] = useState(false);
 
   // Transform backend cart item to frontend format
   const transformBackendItem = (item) => {
@@ -20,7 +21,7 @@ export const CartProvider = ({ children }) => {
       originalPrice: product.originalPrice || product.price,
       image: product.images?.[0] || product.image || '',
       quantity: item.quantity || 1,
-      size: item.size || '100ml',
+      size: item.size || '120ml',
       _id: item._id, // Keep backend ID for updates/deletes
     };
   };
@@ -102,7 +103,7 @@ export const CartProvider = ({ children }) => {
             body: JSON.stringify({
               productId: item.id,
               quantity: item.quantity || 1,
-              size: item.size || '100ml',
+              size: item.size || '120ml',
             }),
           });
         } catch (error) {
@@ -175,28 +176,82 @@ export const CartProvider = ({ children }) => {
   }, [cart]);
 
   const addToCart = useCallback(async (product, quantity = 1, size = null, sizePrice = null) => {
-    // Dismiss any existing cart toast to prevent duplicates
-    toast.dismiss('cart-add-toast');
+    // Prevent multiple simultaneous adds
+    if (addingToCart) return;
+    
+    setAddingToCart(true);
+    
+    try {
+      // Dismiss any existing cart toast to prevent duplicates
+      toast.dismiss('cart-add-toast');
+      
+      // Ensure quantity is at least 1
+      const qty = Math.max(1, quantity);
+    
+    // Normalize product ID (handle both id and _id)
+    const productId = product.id || product._id;
+    if (!productId) {
+      toast.error('Invalid product. Please try again.', { id: 'cart-add-toast' });
+      return;
+    }
+    
+    // Normalize size (default to first available size or '120ML')
+    let normalizedSize = size;
+    if (!normalizedSize && product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
+      normalizedSize = product.sizes[0].value || product.sizes[0].size || '120ML';
+    }
+    normalizedSize = normalizedSize || '120ML';
     
     // Determine the price to use
-    const itemPrice = sizePrice !== null ? sizePrice : product.price;
+    let itemPrice = sizePrice;
     let itemOriginalPrice = product.originalPrice || product.price;
-    if (product.sizes && Array.isArray(product.sizes) && size) {
-      const sizeObj = product.sizes.find(s => s.value === size || s.size === size);
-      if (sizeObj && sizeObj.originalPrice) {
-        itemOriginalPrice = sizeObj.originalPrice;
+    
+    if (product.sizes && Array.isArray(product.sizes) && normalizedSize) {
+      const sizeObj = product.sizes.find(s => 
+        (s.value === normalizedSize || s.size === normalizedSize) ||
+        (s.value?.toUpperCase() === normalizedSize.toUpperCase() || s.size?.toUpperCase() === normalizedSize.toUpperCase())
+      );
+      if (sizeObj) {
+        itemPrice = sizeObj.price;
+        itemOriginalPrice = sizeObj.originalPrice || sizeObj.price;
+        
+        // Check stock availability
+        const stockQty = sizeObj.stockQuantity || 0;
+        const inStock = sizeObj.inStock !== undefined ? sizeObj.inStock : (stockQty > 0);
+        
+        if (!inStock || stockQty === 0) {
+          toast.error(`Size ${normalizedSize} is out of stock`, { id: 'cart-add-toast' });
+          return;
+        }
+        
+        // Check if adding quantity exceeds stock
+        const existingItem = cart.find(
+          (item) => (item.id === productId || item.id?.toString() === productId?.toString()) && 
+                    (item.size === normalizedSize || item.size?.toUpperCase() === normalizedSize.toUpperCase())
+        );
+        const currentQty = existingItem ? existingItem.quantity : 0;
+        if (currentQty + qty > stockQty) {
+          toast.error(`Only ${stockQty} items available in stock for ${normalizedSize}`, { id: 'cart-add-toast' });
+          return;
+        }
       }
+    }
+    
+    // Fallback to product price if size price not found
+    if (itemPrice === null || itemPrice === undefined) {
+      itemPrice = product.price;
     }
 
     // Check if product already exists in cart (same product ID and same size)
     const existingItemIndex = cart.findIndex(
-      (item) => item.id === product.id && item.size === size
+      (item) => (item.id === productId || item.id?.toString() === productId?.toString()) && 
+                (item.size === normalizedSize || item.size?.toUpperCase() === normalizedSize.toUpperCase())
     );
 
     if (existingItemIndex >= 0) {
       // Update quantity if product already exists
       const existingItem = cart[existingItemIndex];
-      const newQuantity = existingItem.quantity + quantity;
+      const newQuantity = existingItem.quantity + qty;
       
       // Optimistic update
       setCart((prevCart) => {
@@ -218,6 +273,7 @@ export const CartProvider = ({ children }) => {
           });
         } catch (error) {
           console.error('Error updating cart item in backend:', error);
+          toast.error('Failed to update cart. Please try again.', { id: 'cart-add-toast' });
           // Reload from backend to sync
           await loadCartFromBackend();
         }
@@ -225,14 +281,14 @@ export const CartProvider = ({ children }) => {
     } else {
       // Add new product to cart
       const newItem = {
-        id: product.id,
+        id: productId,
         name: product.name,
         category: product.category || product.gender || 'Unisex',
         price: itemPrice,
         originalPrice: itemOriginalPrice,
         image: product.images?.[0] || product.image || '',
-        quantity: quantity,
-        size: size || '100ml'
+        quantity: qty,
+        size: normalizedSize
       };
 
       // Optimistic update
@@ -244,23 +300,31 @@ export const CartProvider = ({ children }) => {
         const response = await apiRequest('/cart', {
           method: 'POST',
           body: JSON.stringify({
-            productId: product.id,
-            quantity: quantity,
-            size: size || '100ml',
+            productId: productId.toString(),
+            quantity: qty,
+            size: normalizedSize,
           }),
         });
 
         if (response && response.success) {
           // Reload from backend to get the actual item with _id
           await loadCartFromBackend();
+        } else {
+          throw new Error(response?.message || 'Failed to add to cart');
         }
       } catch (error) {
         console.error('Error adding item to backend cart:', error);
-        // Item already added to local state, so we continue
-        // Will sync on next page load
+        toast.error('Failed to add to cart. Please try again.', { id: 'cart-add-toast' });
+        // Revert optimistic update on error
+        setCart((prevCart) => prevCart.filter(item => 
+          !(item.id === productId && item.size === normalizedSize)
+        ));
       }
     }
-  }, [cart, loadCartFromBackend]);
+    } finally {
+      setAddingToCart(false);
+    }
+  }, [cart, loadCartFromBackend, addingToCart]);
 
   const updateQuantity = useCallback(async (id, newQuantity, size = null) => {
     if (newQuantity < 1) {
@@ -348,6 +412,7 @@ export const CartProvider = ({ children }) => {
     getCartItemCount,
     loading,
     isSyncing,
+    addingToCart,
     refreshCart: loadCartFromBackend, // Expose refresh function
   };
 
@@ -365,5 +430,6 @@ export const useCart = () => {
   }
   return context;
 };
+
 
 

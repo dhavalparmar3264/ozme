@@ -32,10 +32,13 @@ console.log('🌐 Current hostname:', window.location.hostname);
 console.log('🌐 Current protocol:', window.location.protocol);
 
 /**
- * Get auth token from localStorage
+ * Get auth token from localStorage (DEPRECATED - use httpOnly cookie instead)
+ * Kept for backward compatibility only - backend uses httpOnly cookie as source of truth
  */
 const getToken = () => {
-  return localStorage.getItem('token');
+  // Backend uses httpOnly cookie, not localStorage token
+  // This is kept for legacy support but should not be relied upon
+  return null; // Always return null - use cookie instead
 };
 
 /**
@@ -90,6 +93,18 @@ export const apiRequest = async (endpoint, options = {}) => {
     const data = await response.json();
 
     if (!response.ok) {
+      // CRITICAL: Handle 502 Bad Gateway specially - return structured error instead of throwing
+      if (response.status === 502) {
+        console.error('❌ Backend returned 502 Bad Gateway:', url);
+        return {
+          success: false,
+          message: 'Server is temporarily unavailable. Please try again in a moment.',
+          errorCode: 'BACKEND_OFFLINE',
+          isOffline: true,
+          status: 502,
+        };
+      }
+      
       // For authentication errors (401, 403), throw with error data for proper handling
       if (response.status === 401 || response.status === 403) {
         const authError = new Error(data.message || `API request failed: ${response.status}`);

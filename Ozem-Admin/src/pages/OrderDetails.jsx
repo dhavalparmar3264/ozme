@@ -59,7 +59,7 @@ const OrderDetails = ({ onBack }) => {
             name: item.product?.name || 'Product',
             qty: item.quantity || 1,
             price: item.price || 0,
-            size: item.size || '100ml',
+            size: item.size || '120ml',
             image: item.product?.images?.[0] || ''
           })) || [],
           subtotal: backendOrder.subtotal || (backendOrder.totalAmount + (backendOrder.discountAmount || 0)),

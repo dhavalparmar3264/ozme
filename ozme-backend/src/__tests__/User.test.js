@@ -4,7 +4,9 @@ import mongoose from 'mongoose';
 describe('User Model', () => {
   beforeAll(async () => {
     // Connect to test database
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/ozme-test');
+    // Use test database from environment or skip if not set
+    const testURI = process.env.MONGODB_URI_TEST || process.env.MONGODB_URI || 'mongodb://localhost:27017/ozme-test';
+    await mongoose.connect(testURI);
   });
 
   afterAll(async () => {

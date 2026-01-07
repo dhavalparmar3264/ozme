@@ -19,9 +19,12 @@ export const getProducts = async (req, res) => {
     } = req.query;
 
     // Build query - only show active products to customers
+    // NOTE: We don't filter by inStock here because:
+    // 1. inStock might be calculated from sizes array
+    // 2. We want to show products even if temporarily out of stock (with "Out of Stock" badge)
+    // 3. Stock calculation happens after fetching products
     const query = {
       active: true,
-      inStock: true
     };
 
     if (category) query.category = category;
@@ -46,11 +49,19 @@ export const getProducts = async (req, res) => {
       .skip(skip)
       .limit(Number(limit));
 
-    // Calculate inStock from sizes array if present
+    // Calculate inStock from sizes array if present, or from stockQuantity
     const productsWithCalculatedStock = products.map(product => {
       if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
         // Product is in stock if any size is in stock
         product.inStock = product.sizes.some(size => size.inStock !== false && (size.stockQuantity || 0) > 0);
+        // Also calculate total stockQuantity from sizes
+        product.stockQuantity = product.sizes.reduce((sum, size) => sum + (size.stockQuantity || 0), 0);
+      } else {
+        // For single-size products, use product-level stockQuantity
+        // inStock is true if stockQuantity > 0 OR if inStock is explicitly true
+        if (product.inStock === undefined) {
+          product.inStock = (product.stockQuantity || 0) > 0;
+        }
       }
       return product;
     });
@@ -92,14 +103,22 @@ export const getProduct = async (req, res) => {
       });
     }
 
-    // Calculate inStock from sizes array if present
+    // Calculate inStock from sizes array if present, or from stockQuantity
     if (product.sizes && Array.isArray(product.sizes) && product.sizes.length > 0) {
       // Product is in stock if any size is in stock
       product.inStock = product.sizes.some(size => size.inStock !== false && (size.stockQuantity || 0) > 0);
+      // Also calculate total stockQuantity from sizes
+      product.stockQuantity = product.sizes.reduce((sum, size) => sum + (size.stockQuantity || 0), 0);
+    } else {
+      // For single-size products, use product-level stockQuantity
+      if (product.inStock === undefined) {
+        product.inStock = (product.stockQuantity || 0) > 0;
+      }
     }
 
     // Only show active products to customers (admin can view all via admin route)
-    if (!product.active || !product.inStock) {
+    // NOTE: We show products even if out of stock (inStock: false) so users can see them with "Out of Stock" badge
+    if (!product.active) {
       return res.status(404).json({
         success: false,
         message: 'Product not available',

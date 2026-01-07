@@ -1,6 +1,6 @@
 import Product from '../models/Product.js';
 import Category from '../models/Category.js';
-import { uploadMultipleImages } from '../utils/cloudinary.js';
+import { uploadMultipleImages, deleteImage } from '../utils/cloudinary.js';
 
 /**
  * Sanitize product name for Cloudinary folder name
@@ -15,6 +15,39 @@ const sanitizeFolderName = (productName) => {
     .replace(/\s+/g, '-') // Replace spaces with hyphens
     .replace(/-+/g, '-') // Replace multiple hyphens with single hyphen
     .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
+};
+
+/**
+ * Normalize size value to match enum format
+ * Converts "120 ml" to "120ML", "50 ml" to "50ML", etc.
+ * @param {string} size - Size value (e.g., "120 ml" or "120ML")
+ * @returns {string} - Normalized size (e.g., "120ML")
+ */
+const normalizeSize = (size) => {
+  if (!size) return '120ML';
+  
+  // Map lowercase with space to uppercase without space
+  const sizeMap = {
+    '50 ml': '50ML',
+    '120 ml': '120ML',
+    '150 ml': '150ML',
+    '200 ml': '200ML',
+    '250 ml': '250ML',
+    '300 ml': '300ML',
+  };
+  
+  // If it's already in the map, return the normalized value
+  if (sizeMap[size.toLowerCase()]) {
+    return sizeMap[size.toLowerCase()];
+  }
+  
+  // If it's already uppercase (120ML), return as-is
+  if (['50ML', '120ML', '150ML', '200ML', '250ML', '300ML'].includes(size)) {
+    return size;
+  }
+  
+  // Default fallback
+  return '120ML';
 };
 
 /**
@@ -86,6 +119,17 @@ export const getAdminProducts = async (req, res) => {
  */
 export const createAdminProduct = async (req, res) => {
   try {
+    // Log request size for debugging (safe - no secrets)
+    const contentLength = req.headers['content-length'];
+    const contentType = req.headers['content-type'];
+    console.log('📤 Product creation request:', {
+      method: req.method,
+      contentType: contentType?.substring(0, 50) || 'unknown',
+      contentLength: contentLength ? `${(parseInt(contentLength) / 1024 / 1024).toFixed(2)}MB` : 'unknown',
+      fileCount: req.files?.length || 0,
+      hasFiles: !!(req.files && req.files.length > 0),
+    });
+
     // Parse product data from FormData
     let productData;
     if (req.body.productData) {
@@ -205,9 +249,9 @@ export const createAdminProduct = async (req, res) => {
 
     // Handle sizes array or single size (backward compatibility)
     if (productData.sizes && Array.isArray(productData.sizes) && productData.sizes.length > 0) {
-      // Use sizes array
+      // Use sizes array - normalize size values
       productToCreate.sizes = productData.sizes.map(sizeObj => ({
-        size: sizeObj.size,
+        size: normalizeSize(sizeObj.size),
         price: parseFloat(sizeObj.price),
         originalPrice: sizeObj.originalPrice ? parseFloat(sizeObj.originalPrice) : undefined,
         stockQuantity: parseInt(sizeObj.stockQuantity) || 0,
@@ -221,8 +265,8 @@ export const createAdminProduct = async (req, res) => {
       productToCreate.stockQuantity = productToCreate.sizes.reduce((sum, s) => sum + s.stockQuantity, 0);
       productToCreate.inStock = productToCreate.sizes.some(s => s.inStock);
     } else {
-      // Backward compatibility: single size
-      productToCreate.size = productData.size || '100ML';
+      // Backward compatibility: single size - normalize size value
+      productToCreate.size = normalizeSize(productData.size);
       productToCreate.price = parseFloat(productData.price);
       productToCreate.originalPrice = productData.originalPrice ? parseFloat(productData.originalPrice) : undefined;
       productToCreate.stockQuantity = parseInt(productData.stockQuantity) || 0;
@@ -350,9 +394,9 @@ export const updateAdminProduct = async (req, res) => {
         sizeObj.inStock = sizeObj.stockQuantity > 0;
       }
 
-      // Set sizes array
+      // Set sizes array - normalize size values
       updateData.sizes = productData.sizes.map(sizeObj => ({
-        size: sizeObj.size,
+        size: normalizeSize(sizeObj.size),
         price: parseFloat(sizeObj.price),
         originalPrice: sizeObj.originalPrice ? parseFloat(sizeObj.originalPrice) : undefined,
         stockQuantity: parseInt(sizeObj.stockQuantity) || 0,
@@ -366,8 +410,8 @@ export const updateAdminProduct = async (req, res) => {
       updateData.stockQuantity = updateData.sizes.reduce((sum, s) => sum + s.stockQuantity, 0);
       updateData.inStock = updateData.sizes.some(s => s.inStock);
     } else {
-      // Handle single size fields (backward compatibility)
-      if (productData.size !== undefined) updateData.size = productData.size;
+      // Handle single size fields (backward compatibility) - normalize size value
+      if (productData.size !== undefined) updateData.size = normalizeSize(productData.size);
       if (productData.price !== undefined) {
         updateData.price = parseFloat(productData.price);
         // Validate MRP >= Price if both are provided
@@ -490,6 +534,116 @@ export const deleteAdminProduct = async (req, res) => {
     });
   } catch (error) {
     console.error('Delete product error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+/**
+ * Delete product image
+ * @route DELETE /api/admin/products/:productId/images
+ */
+export const deleteProductImage = async (req, res) => {
+  try {
+    console.log('DELETE /api/admin/products/:productId/images - Request received:', {
+      method: req.method,
+      url: req.url,
+      params: req.params,
+      body: req.body,
+    });
+    
+    const { productId } = req.params;
+    const { imageUrl } = req.body;
+
+    if (!imageUrl) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image URL is required',
+      });
+    }
+
+    // Find the product
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
+
+    // Check if image exists in product images array
+    const imageIndex = product.images.indexOf(imageUrl);
+    if (imageIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Image not found in product',
+      });
+    }
+
+    // Prevent deleting the last image if it's the only one
+    if (product.images.length === 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete the last image. Products must have at least one image.',
+      });
+    }
+
+    // Extract public_id from Cloudinary URL
+    // Cloudinary URLs format: https://res.cloudinary.com/{cloud_name}/image/upload/{version}/{public_id}.{format}
+    // or: https://res.cloudinary.com/{cloud_name}/image/upload/{transformation}/{public_id}.{format}
+    // or: https://res.cloudinary.com/{cloud_name}/image/upload/{folder}/{public_id}.{format}
+    let publicId = null;
+    try {
+      // Match Cloudinary URL pattern
+      const cloudinaryMatch = imageUrl.match(/\/upload\/(.+)$/);
+      if (cloudinaryMatch) {
+        let path = cloudinaryMatch[1];
+        
+        // Remove version prefix if present (v1234567890/)
+        path = path.replace(/^v\d+\//, '');
+        
+        // Remove transformation parameters if present (e.g., w_500,h_500,c_fill/)
+        // Transformations are typically alphanumeric with underscores and commas, followed by /
+        path = path.replace(/^[a-z0-9_,]+(?=\/)/, '');
+        
+        // Remove file extension
+        publicId = path.replace(/\.[^/.]+$/, '');
+        
+        // Remove leading/trailing slashes
+        publicId = publicId.replace(/^\/+|\/+$/g, '');
+      }
+    } catch (parseError) {
+      console.warn('Could not parse Cloudinary public_id from URL:', imageUrl, parseError);
+      // Continue with deletion from DB even if we can't delete from Cloudinary
+    }
+
+    // Remove image from product images array
+    product.images = product.images.filter(img => img !== imageUrl);
+    await product.save();
+
+    // Try to delete from Cloudinary if public_id was extracted
+    if (publicId) {
+      try {
+        await deleteImage(publicId);
+        console.log(`Deleted image from Cloudinary: ${publicId}`);
+      } catch (cloudinaryError) {
+        console.error('Error deleting image from Cloudinary:', cloudinaryError);
+        // Don't fail the request if Cloudinary deletion fails - image is already removed from DB
+        // Log the error but continue
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Image deleted successfully',
+      data: {
+        images: product.images,
+      },
+    });
+  } catch (error) {
+    console.error('Delete product image error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Server error',

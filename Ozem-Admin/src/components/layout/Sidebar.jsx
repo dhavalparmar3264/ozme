@@ -10,7 +10,8 @@ import {
   ChevronRight,
   Sparkles,
   LogOut,
-  FolderTree
+  FolderTree,
+  MessageCircle
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -37,6 +38,7 @@ const Sidebar = ({ isOpen, setIsOpen, toggleSidebar }) => {
     { id: 'users', label: 'Users', icon: Users, path: '/users' },
     { id: 'coupons', label: 'Coupons', icon: Tag, path: '/coupons' },
     { id: 'reviews', label: 'Reviews', icon: MessageSquare, path: '/reviews' },
+    { id: 'feedback', label: 'Feedback', icon: MessageCircle, path: '/feedback' },
     { id: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
   ];
 

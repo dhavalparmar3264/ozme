@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Filter, X, SlidersHorizontal, Star, Heart, ShoppingCart, Eye, Sparkles, Loader2 } from 'lucide-react';
+import { Star, Heart, ShoppingCart, Eye, Sparkles, Loader2 } from 'lucide-react';
 import { apiRequest } from '../utils/api';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
@@ -13,14 +13,11 @@ function ShopPage({ onProductClick, onQuickView }) {
   const searchQuery = searchParams.get('query') || '';
   const { addToCart } = useCart();
   const { toggleWishlist, isInWishlist } = useWishlist();
-  const [showFilters, setShowFilters] = useState(false);
   const [hoveredProduct, setHoveredProduct] = useState(null);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filters, setFilters] = useState({
-    priceRange: [0, 5000],
-    rating: 0,
     sortBy: 'popularity'
   });
 
@@ -41,16 +38,6 @@ function ShopPage({ onProductClick, onQuickView }) {
       // Force all products to be unisex
       params.append('gender', 'Unisex');
       
-      // Apply filters
-      if (filters.priceRange[0] > 0) {
-        params.append('minPrice', filters.priceRange[0].toString());
-      }
-      if (filters.priceRange[1] < 5000) {
-        params.append('maxPrice', filters.priceRange[1].toString());
-      }
-      if (filters.rating > 0) {
-        params.append('minRating', filters.rating.toString());
-      }
       if (searchQuery) {
         params.append('search', searchQuery);
       }
@@ -62,8 +49,10 @@ function ShopPage({ onProductClick, onQuickView }) {
 
       if (response && response.success) {
         // Transform backend products to frontend format
+        // NOTE: Backend already filters by active: true, so we only need to check active here
+        // We show products even if out of stock (inStock: false) so users can see them with "Out of Stock" badge
         const transformedProducts = response.data.products
-          .filter(product => product.active && product.inStock) // Only show active, in-stock products
+          .filter(product => product.active) // Only show active products (stock status shown via badge)
           .map(product => {
             // Handle sizes array if available, otherwise use single size
             let sizes = [];
@@ -78,8 +67,8 @@ function ShopPage({ onProductClick, onQuickView }) {
               }));
             } else {
               sizes = [{
-                value: product.size || '100ML',
-                label: product.size || '100ML',
+                value: product.size || '120ML',
+                label: product.size || '120ML',
                 price: product.price,
                 originalPrice: product.originalPrice || product.price,
                 stockQuantity: product.stockQuantity || 0,
@@ -111,7 +100,7 @@ function ShopPage({ onProductClick, onQuickView }) {
               shortDescription: product.shortDescription || '',
               inStock: product.inStock,
               stockQuantity: product.stockQuantity || 0,
-              size: sizes.length > 0 ? sizes[0].value : (product.size || '100ML'),
+              size: sizes.length > 0 ? sizes[0].value : (product.size || '120ML'),
               sizes: sizes // Include sizes array for modal
             };
           });
@@ -142,15 +131,6 @@ function ShopPage({ onProductClick, onQuickView }) {
     }
   });
 
-  const handlePriceChange = (index, value) => {
-    const newRange = [...filters.priceRange];
-    newRange[index] = parseInt(value);
-    setFilters({ ...filters, priceRange: newRange });
-  };
-
-  const resetFilters = () => setFilters({
-    priceRange: [0, 5000], rating: 0, sortBy: 'popularity'
-  });
 
   return (
     <div className="min-h-screen bg-white">
@@ -189,70 +169,23 @@ function ShopPage({ onProductClick, onQuickView }) {
       {/* Main Content */}
       <section className="py-8 sm:py-12 md:py-16 relative overflow-hidden">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
-          <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 md:gap-8">
-            {/* Filters Sidebar */}
-            <aside className={`lg:w-72 ${showFilters ? 'fixed inset-0 z-50 bg-white p-4 sm:p-6 overflow-y-auto' : 'hidden lg:block'}`}>
-              <div className="sticky top-4 sm:top-6 md:top-24">
-                <div className="flex items-center justify-between mb-6 sm:mb-8">
-                  <h2 className="text-xl sm:text-2xl font-light text-gray-900 flex items-center gap-2 tracking-tight">
-                    <Filter className="w-4 h-4 sm:w-5 sm:h-5" />Filters
-                  </h2>
-                  {showFilters && (
-                    <button onClick={() => setShowFilters(false)} className="lg:hidden p-2">
-                      <X className="w-5 h-5 sm:w-6 sm:h-6" />
-                    </button>
-                  )}
-                </div>
-                <div className="space-y-6 sm:space-y-8">
-                  {/* Price Range */}
-                  <div>
-                    <label className="block text-xs font-semibold mb-2 sm:mb-3 text-gray-900 uppercase tracking-widest">Price Range</label>
-                    <div className="space-y-3 sm:space-y-4">
-                      <div className="flex items-center justify-between text-xs sm:text-sm text-gray-600">
-                        <span>₹{filters.priceRange[0]}</span><span>₹{filters.priceRange[1]}</span>
-                      </div>
-                      <input type="range" min="0" max="5000" step="100" value={filters.priceRange[0]} onChange={(e) => handlePriceChange(0, e.target.value)} className="w-full" />
-                      <input type="range" min="0" max="5000" step="100" value={filters.priceRange[1]} onChange={(e) => handlePriceChange(1, e.target.value)} className="w-full" />
-                    </div>
-                  </div>
-                  {/* Rating Filter */}
-                  <div>
-                    <label className="block text-xs font-semibold mb-2 sm:mb-3 text-gray-900 uppercase tracking-widest">Minimum Rating</label>
-                    <select value={filters.rating} onChange={(e) => setFilters({ ...filters, rating: parseFloat(e.target.value) })}
-                      className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base border-2 border-gray-200 focus:border-gray-900 focus:outline-none transition-all">
-                      <option value="0">All Ratings</option>
-                      <option value="4">4★ & above</option>
-                      <option value="4.5">4.5★ & above</option>
-                      <option value="4.8">4.8★ & above</option>
-                    </select>
-                  </div>
-                  <button onClick={resetFilters} className="w-full py-2.5 sm:py-3 text-sm sm:text-base border-2 border-gray-900 text-gray-900 font-semibold hover:bg-gray-900 hover:text-white transition-all duration-300">
-                    Reset Filters
-                  </button>
-                </div>
+          {/* Products Grid */}
+          <main className="w-full">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-6 sm:mb-8 pb-4 sm:pb-6 border-b border-gray-200">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 sm:ml-auto w-full sm:w-auto">
+                <span className="text-xs sm:text-sm text-gray-600 font-light text-center sm:text-left">
+                  {loading ? 'Loading...' : `${sortedProducts.length} Products`}
+                </span>
+                <select value={filters.sortBy} onChange={(e) => setFilters({ ...filters, sortBy: e.target.value })}
+                  className="w-full sm:w-auto px-3 sm:px-4 py-2 text-xs sm:text-sm border-2 border-gray-200 focus:border-gray-900 focus:outline-none">
+                  <option value="popularity">Most Popular</option>
+                  <option value="price-low">Price: Low to High</option>
+                  <option value="price-high">Price: High to Low</option>
+                  <option value="rating">Highest Rated</option>
+                  <option value="newest">Newest First</option>
+                </select>
               </div>
-            </aside>
-
-            {/* Products Grid */}
-            <main className="flex-1 min-w-0">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-6 sm:mb-8 pb-4 sm:pb-6 border-b border-gray-200">
-                <button onClick={() => setShowFilters(true)} className="lg:hidden flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base border-2 border-gray-900 text-gray-900 font-semibold hover:bg-gray-900 hover:text-white transition-all w-full sm:w-auto">
-                  <SlidersHorizontal className="w-4 h-4 sm:w-5 sm:h-5" />Filters
-                </button>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 sm:ml-auto w-full sm:w-auto">
-                  <span className="text-xs sm:text-sm text-gray-600 font-light text-center sm:text-left">
-                    {loading ? 'Loading...' : `${sortedProducts.length} Products`}
-                  </span>
-                  <select value={filters.sortBy} onChange={(e) => setFilters({ ...filters, sortBy: e.target.value })}
-                    className="w-full sm:w-auto px-3 sm:px-4 py-2 text-xs sm:text-sm border-2 border-gray-200 focus:border-gray-900 focus:outline-none">
-                    <option value="popularity">Most Popular</option>
-                    <option value="price-low">Price: Low to High</option>
-                    <option value="price-high">Price: High to Low</option>
-                    <option value="rating">Highest Rated</option>
-                    <option value="newest">Newest First</option>
-                  </select>
-                </div>
-              </div>
+            </div>
 
               {loading ? (
                 <div className="flex items-center justify-center py-24">
@@ -268,10 +201,7 @@ function ShopPage({ onProductClick, onQuickView }) {
                 </div>
               ) : sortedProducts.length === 0 ? (
                 <div className="text-center py-12 sm:py-16 md:py-24 px-4">
-                  <p className="text-base sm:text-lg md:text-xl text-gray-400 mb-4 sm:mb-6 font-light">No products found matching your criteria</p>
-                  <button onClick={resetFilters} className="px-6 sm:px-8 py-2.5 sm:py-3 text-sm sm:text-base border-2 border-gray-900 text-gray-900 font-semibold hover:bg-gray-900 hover:text-white transition-all">
-                    Clear All Filters
-                  </button>
+                  <p className="text-base sm:text-lg md:text-xl text-gray-400 mb-4 sm:mb-6 font-light">No products found</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 md:gap-8">
@@ -308,7 +238,7 @@ function ShopPage({ onProductClick, onQuickView }) {
 
                           {/* Add to Cart */}
                           <div className="absolute bottom-0 left-0 right-0 p-2 sm:p-3 md:p-4 translate-y-full group-hover:translate-y-0 transition-transform duration-500">
-                            <button onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '100ml'); }}
+                            <button onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '120ml'); }}
                               className="w-full py-2 sm:py-2.5 md:py-3 text-xs sm:text-sm bg-white text-gray-900 font-semibold hover:bg-gray-900 hover:text-white transition-all duration-300 flex items-center justify-center gap-1.5 sm:gap-2 shadow-xl">
                                 <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4" />Add to Cart
                             </button>
@@ -343,7 +273,7 @@ function ShopPage({ onProductClick, onQuickView }) {
                         {/* Mobile Add to Cart Button - Visible on mobile only */}
                         <div className="mt-3 sm:mt-4 md:hidden">
                           <button 
-                            onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '100ml'); }}
+                            onClick={(e) => { e.stopPropagation(); addToCart(product, 1, '120ml'); }}
                             className="w-full py-2.5 sm:py-3 text-sm bg-black text-white font-semibold hover:bg-gray-900 transition-all duration-300 flex items-center justify-center gap-2 shadow-lg"
                           >
                             <ShoppingCart className="w-4 h-4" />
@@ -356,7 +286,6 @@ function ShopPage({ onProductClick, onQuickView }) {
                 </div>
               )}
             </main>
-          </div>
         </div>
       </section>
     </div>
